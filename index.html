@@ -200,6 +200,23 @@ input[type=range]:disabled{opacity:.85}
     </div>
 
     <div class="panel" role="tabpanel" id="p-warstwy" aria-labelledby="tab-warstwy" hidden>
+      <div class="grid2">
+        <div class="row">
+          <span class="lbl">Brzmienie</span>
+          <div class="seg" id="toneSeg" role="group" aria-label="Brzmienie">
+            <button class="segb" type="button" data-tone="hifi" aria-pressed="true">Hi-fi</button>
+            <button class="segb" type="button" data-tone="lofi" aria-pressed="false">Lo-fi</button>
+          </div>
+        </div>
+        <div class="row" id="rowShimmer">
+          <label for="shimmer"><span>Shimmer<small>pogłos o oktawę wyżej</small></span><output id="shimmerOut"></output></label>
+          <input type="range" id="shimmer" min="0" max="100" value="40">
+        </div>
+        <div class="row" id="rowTape" hidden>
+          <label for="tape"><span>Taśma<small>falowanie, nasycenie, szum</small></span><output id="tapeOut"></output></label>
+          <input type="range" id="tape" min="0" max="100" value="60">
+        </div>
+      </div>
       <div class="seg" id="instSeg" role="group" aria-label="Instrument">
         <button class="segb" type="button" data-inst="drone" aria-pressed="true">Drone</button>
         <button class="segb" type="button" data-inst="pad" aria-pressed="false">Pad</button>
@@ -224,6 +241,14 @@ input[type=range]:disabled{opacity:.85}
         <div class="row">
           <label for="fxReverb"><span>Reverb<small>pogłos</small></span><output id="fxReverbOut"></output></label>
           <input type="range" id="fxReverb" min="0" max="100" value="50">
+        </div>
+        <div class="row" id="rowTimbre" hidden>
+          <span class="lbl">Barwa plucka</span>
+          <div class="seg" id="timbreSeg" role="group" aria-label="Barwa plucka">
+            <button class="segb" type="button" data-timbre="harfa" aria-pressed="true">Harfa</button>
+            <button class="segb" type="button" data-timbre="kalimba" aria-pressed="false">Kalimba</button>
+            <button class="segb" type="button" data-timbre="krysztal" aria-pressed="false">Kryształ</button>
+          </div>
         </div>
         <div class="row" id="rowChor" hidden>
           <label for="chor"><span>Barwa padu<small>smyczki ↔ chór</small></span><output id="chorOut"></output></label>
@@ -433,8 +458,26 @@ segGroup('instSeg', 'inst', name => {
   const isMix = name === 'mix';
   $('instCtl').hidden = isMix; $('mixCtl').hidden = !isMix;
   $('rowChor').hidden = name !== 'pad';
+  $('rowTimbre').hidden = !(name === 'pluck' && TONE.mode === 'hifi');
   if (!isMix) for (const k in fxSet) fxSet[k](FX[name][k]);
 });
+
+/* Sound mode: Hi-fi (string plucks, shimmer, living pad) or Lo-fi (the original sounds through tape) */
+const TONE = Object.assign({mode:'hifi', shimmer:.4, tape:.6, timbre:'harfa'},
+  (() => { try { return JSON.parse(localStorage.getItem('lz-tone') || '{}'); } catch(_){ return {}; } })());
+function saveTone(){ try { localStorage.setItem('lz-tone', JSON.stringify(TONE)); } catch(_){} }
+function toneUI(){
+  document.querySelectorAll('#toneSeg button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.tone === TONE.mode)));
+  document.querySelectorAll('#timbreSeg button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.timbre === TONE.timbre)));
+  $('rowShimmer').hidden = TONE.mode !== 'hifi'; $('rowTape').hidden = TONE.mode !== 'lofi';
+  $('rowTimbre').hidden = !(inst === 'pluck' && TONE.mode === 'hifi');
+}
+$('shimmer').value = Math.round(TONE.shimmer*100); $('tape').value = Math.round(TONE.tape*100);
+bind('shimmer', pct, v => { TONE.shimmer = v/100; saveTone(); });
+bind('tape', pct, v => { TONE.tape = v/100; saveTone(); });
+segGroup('toneSeg', 'tone', v => { TONE.mode = v; saveTone(); toneUI(); });
+segGroup('timbreSeg', 'timbre', v => { TONE.timbre = v; saveTone(); });
+toneUI();
 fxSet.vol(FX.drone.vol); fxSet.chorus(FX.drone.chorus); fxSet.delay(FX.drone.delay); fxSet.reverb(FX.drone.reverb);
 segGroup('echoSeg', 'echo', v => MIX.echo = +v);
 bind('ambVol', pct, v => FX.amb.vol = v);
@@ -785,6 +828,93 @@ function brownBuffer(ac, sec){
   return b;
 }
 
+/* ---------- DSP worklet: plucked string (Karplus-Strong), kalimba, crystal bells, octave shifter for shimmer ---------- */
+function lzWorklet(){
+  class KS extends AudioWorkletProcessor {
+    constructor(){ super(); this.voices = []; this.q = []; this.port.onmessage = e => this.q.push(e.data); }
+    start(d, off){
+      const sr = sampleRate, f = d.f;
+      const a0 = (d.pan + 1)*Math.PI/4;
+      const v = {off, gl:Math.cos(a0), gr:Math.sin(a0), t:0};
+      const sine = (list, scale) => list.map(([r, a, dec]) => ({w:2*Math.PI*f*r/sr, ph:0, a:a*d.vel*scale, k:Math.pow(.001, 1/(dec*sr))}));
+      if (d.kind === 2){
+        const s = d.dec/2.3;
+        v.parts = sine([[1,1,4*s],[2.76,.45,2.4*s],[5.4,.22,1.3*s],[8.93,.1,.7*s]], .26);
+        v.max = Math.floor(sr*(4*s + .2));
+      } else {
+        const N = sr/f - .5; let Ni = Math.floor(N), fr = N - Ni;
+        if (fr < .1){ Ni -= 1; fr += 1; }
+        v.N = Math.max(2, Ni); v.C = (1 - fr)/(1 + fr);
+        v.buf = new Float32Array(v.N);
+        const a = d.kind === 1 ? .06 + d.bright*.25 : .12 + d.bright*.8;
+        let y = 0, mean = 0, peak = 1e-6;
+        for (let i=0; i<v.N; i++){ y += a*((Math.random()*2 - 1) - y); v.buf[i] = y; mean += y; }
+        mean /= v.N;
+        for (let i=0; i<v.N; i++){ v.buf[i] -= mean; peak = Math.max(peak, Math.abs(v.buf[i])); }
+        const g = d.vel/peak*(d.kind === 1 ? .35 : .55);
+        for (let i=0; i<v.N; i++) v.buf[i] *= g;
+        const T60 = d.kind === 1 ? d.dec*.55 : d.dec*1.5;
+        v.loss = Math.pow(.001, 1/(T60*f));
+        v.idx = 0; v.last = 0; v.x1 = 0; v.y1 = 0;
+        v.max = Math.floor(sr*(T60 + .1));
+        if (d.kind === 1) v.parts = sine([[1,.5,.9*d.dec/2.3],[5.4,.1,.16]], 1);
+      }
+      this.voices.push(v);
+      if (this.voices.length > 28) this.voices.shift();
+    }
+    process(inputs, outputs){
+      const out = outputs[0], L = out[0], R = out[1] || out[0], n = L.length;
+      for (let i = this.q.length - 1; i >= 0; i--){
+        const d = this.q[i], off = Math.round((d.t - currentTime)*sampleRate);
+        if (off < n){ this.q.splice(i, 1); this.start(d, Math.max(0, off)); }
+      }
+      for (let vi = this.voices.length - 1; vi >= 0; vi--){
+        const v = this.voices[vi];
+        for (let i = v.off; i < n; i++){
+          let s = 0;
+          if (v.buf){
+            const cur = v.buf[v.idx];
+            const avg = .5*(cur + v.last); v.last = cur;
+            const ap = v.C*avg + v.x1 - v.C*v.y1; v.x1 = avg; v.y1 = ap;
+            v.buf[v.idx] = ap*v.loss;
+            v.idx = v.idx + 1 === v.N ? 0 : v.idx + 1;
+            s = cur;
+          }
+          if (v.parts) for (const p of v.parts){ s += Math.sin(p.ph)*p.a; p.ph += p.w; p.a *= p.k; }
+          L[i] += s*v.gl; if (R !== L) R[i] += s*v.gr;
+          v.t++;
+        }
+        v.off = 0;
+        if (v.t > v.max) this.voices.splice(vi, 1);
+      }
+      return true;
+    }
+  }
+  registerProcessor('lz-ks', KS);
+
+  class Shift extends AudioWorkletProcessor {
+    constructor(){ super(); this.size = 16384; this.mask = 16383; this.buf = [new Float32Array(16384), new Float32Array(16384)]; this.w = 0; this.phase = 0; this.W = 2400; }
+    read(c, d){
+      const pos = this.w - d, i0 = Math.floor(pos), fr = pos - i0, b = this.buf[c], m = this.mask;
+      return b[i0 & m]*(1 - fr) + b[(i0 + 1) & m]*fr;
+    }
+    process(inputs, outputs){
+      const inp = inputs[0], out = outputs[0], n = out[0].length, W = this.W;
+      for (let i=0; i<n; i++){
+        for (let c=0; c<2; c++){ const ch = inp[c] || inp[0]; this.buf[c][this.w] = ch ? ch[i] : 0; }
+        const p1 = this.phase, p2 = (p1 + .5) % 1;
+        const g1 = Math.sin(Math.PI*p1)**2, g2 = Math.sin(Math.PI*p2)**2;
+        const d1 = 2 + W*(1 - p1), d2 = 2 + W*(1 - p2);
+        for (let c=0; c<out.length; c++) out[c][i] = g1*this.read(c, d1) + g2*this.read(c, d2);
+        this.phase += 1/W; if (this.phase >= 1) this.phase -= 1;
+        this.w = (this.w + 1) & this.mask;
+      }
+      return true;
+    }
+  }
+  registerProcessor('lz-shift', Shift);
+}
+
 function createEngine(){
   const AC = window.AudioContext || window.webkitAudioContext;
   let ac;
@@ -798,7 +928,15 @@ function createEngine(){
   E.masterLP = node('BiquadFilter',{type:'lowpass', frequency:16000, Q:.5});
   E.masterHP = node('BiquadFilter',{type:'highpass', frequency:150, Q:.6});
   const comp = node('DynamicsCompressor',{threshold:-14, knee:10, ratio:2.5, attack:.02, release:.35});
-  E.master.connect(E.masterLP).connect(E.masterHP).connect(comp).connect(ac.destination);
+  // Tape (Lo-fi): wow and flutter, soft saturation, rolled-off highs, a little hiss
+  E.tapeDelay = node('Delay',{delayTime:.012});
+  E.wowG = lfo(.55, 0, E.tapeDelay.delayTime); E.flutG = lfo(6.3, 0, E.tapeDelay.delayTime);
+  E.tapePre = node('Gain',{gain:.25}); E.tapePost = node('Gain',{gain:1.9});
+  const tapeSh = node('WaveShaper'); const tc = new Float32Array(1024);
+  for (let i=0;i<1024;i++){ const x = i/1023*2-1; tc[i] = Math.tanh(2*x)/Math.tanh(2); }
+  tapeSh.curve = tc; tapeSh.oversample = '2x';
+  E.tapeLP = node('BiquadFilter',{type:'lowpass', frequency:20000, Q:.5});
+  E.master.connect(E.masterLP).connect(E.masterHP).connect(E.tapeDelay).connect(E.tapePre).connect(tapeSh).connect(E.tapePost).connect(E.tapeLP).connect(comp).connect(ac.destination);
 
   // Shared buses: dry, reverb, ping-pong delay
   const dry = node('Gain'); dry.connect(E.master);
@@ -809,6 +947,8 @@ function createEngine(){
   E.revOut = node('Gain',{gain:1});
   const revLP = node('BiquadFilter',{type:'lowpass', frequency:3800, Q:.4});
   E.revIn.connect(pre).connect(revHP).connect(rev).connect(revLP).connect(E.revOut).connect(E.master);
+  E.shimSend = node('Gain',{gain:0});
+  E.revOut.connect(E.shimSend);
 
   E.delIn = node('Gain');
   const dL = node('Delay',{delayTime:.5}), dR = node('Delay',{delayTime:.5});
@@ -862,13 +1002,14 @@ function createEngine(){
   lfo(.08, .12, E.padSwell.gain);
   const vib = lfo(4.7, 4);
   const bodyMix = node('Gain',{gain:.11});
+  E.drift = [];
   E.voices = curChord.v.map((m, vi) => {
     const list = [-8, 8].map(dt => {
       const o = node('Oscillator',{type:'sawtooth', frequency:mtof(m), detune:dt + rnd(-3,3)});
-      vib.connect(o.detune); o.connect(padMix); o.start(); return o;
+      vib.connect(o.detune); o.connect(padMix); o.start(); E.drift.push(lfo(rnd(.03,.12), 0, o.detune)); return o;
     });
     // warm body: a soft triangle on every voice, plus a sine an octave down under the lowest voice
-    const b = node('Oscillator',{type:'triangle', frequency:mtof(m), detune:rnd(-3,3)}); vib.connect(b.detune); b.connect(bodyMix); b.start(); list.push(b);
+    const b = node('Oscillator',{type:'triangle', frequency:mtof(m), detune:rnd(-3,3)}); vib.connect(b.detune); b.connect(bodyMix); b.start(); E.drift.push(lfo(rnd(.03,.12), 0, b.detune)); list.push(b);
     if (vi === 0){ const sub = node('Oscillator',{type:'sine', frequency:mtof(m)/2}); sub.__r = .5; const sg = node('Gain',{gain:1.4}); sub.connect(sg).connect(bodyMix); sub.start(); list.push(sub); }
     return list;
   });
@@ -887,10 +1028,21 @@ function createEngine(){
   });
   E.padExp = node('Gain',{gain:1});
   E.strings.connect(E.padExp); E.choir.connect(E.padExp);
-  E.padExp.connect(E.S.pad.vol);
+  // the pad's colour opens up slowly on each new chord (Hi-fi)
+  E.padOpen = node('BiquadFilter',{type:'lowpass', frequency:20000, Q:.4});
+  E.padExp.connect(E.padOpen).connect(E.S.pad.vol);
 
   // Blizzard noise: two moving bands + a soft whistle
   const pink = pinkBuffer(ac, 4);
+  // breath in the choir (Hi-fi)
+  const breath = node('BufferSource'); breath.buffer = pink; breath.loop = true;
+  E.breathG = node('Gain',{gain:0});
+  breath.connect(E.breathG); E.formants.forEach(bp => E.breathG.connect(bp)); breath.start(0, 1.1);
+  // tape hiss (Lo-fi)
+  const hiss = node('BufferSource'); hiss.buffer = pink; hiss.loop = true;
+  const hissHP = node('BiquadFilter',{type:'highpass', frequency:2500});
+  E.hissG = node('Gain',{gain:0});
+  hiss.connect(hissHP).connect(E.hissG).connect(E.tapeLP); hiss.start(0, 2.9);
   E.windExp = node('Gain',{gain:0});
   E.windBands = [];
   [[-.6,.07],[.6,.11]].forEach(([pan,lf], i) => {
@@ -997,7 +1149,38 @@ function createEngine(){
     n.start(t, Math.random()*3, .1);
   };
 
+  // Hi-fi DSP (AudioWorklet): string plucks and the shimmer's octave shifter. Falls back to the original pluck if unavailable.
+  E.ksOut = node('Gain',{gain:1.6}); E.ksOut.connect(E.S.pluck.vol);
+  E.dsp = (async () => {
+    if (!ac.audioWorklet) return false;
+    const url = URL.createObjectURL(new Blob(['(' + lzWorklet.toString() + ')()'], {type:'application/javascript'}));
+    await ac.audioWorklet.addModule(url);
+    E.ks = new AudioWorkletNode(ac, 'lz-ks', {numberOfInputs:0, numberOfOutputs:1, outputChannelCount:[2]});
+    E.ks.connect(E.ksOut);
+    const sh = new AudioWorkletNode(ac, 'lz-shift', {numberOfInputs:1, numberOfOutputs:1, outputChannelCount:[2]});
+    const shHP = node('BiquadFilter',{type:'highpass', frequency:350}), shLP = node('BiquadFilter',{type:'lowpass', frequency:6500});
+    const shDelay = node('Delay',{delayTime:.07});
+    E.shimOut = node('Gain',{gain:.6});
+    E.shimSend.connect(sh).connect(shHP).connect(shLP).connect(shDelay);
+    shDelay.connect(E.revIn);              // feedback through the reverb: each pass climbs an octave
+    shDelay.connect(E.shimOut).connect(E.master);
+    return true;
+  })().catch(() => false);
+  E.playPluck = (midi, t, vel, p) => {
+    if (TONE.mode !== 'hifi' || !E.ks) return E.pluck(midi, t, vel, p);
+    E.ks.port.postMessage({f:mtof(midi), t, vel, pan:rnd(-.65,.65), dec:2.3 + p.eyes*1.4,
+      bright:clamp(.45 + p.smile*.35 + p.wind*.2 - p.eyes*.4, 0, 1), kind:{harfa:0, kalimba:1, krysztal:2}[TONE.timbre] || 0});
+  };
+
   E.setChord = (chord, t) => {
+    if (TONE.mode === 'hifi'){
+      E.padOpen.frequency.cancelScheduledValues(t);
+      E.padOpen.frequency.setValueAtTime(650, t);
+      E.padOpen.frequency.exponentialRampToValueAtTime(9000, t + 3.5);
+    } else {
+      E.padOpen.frequency.cancelScheduledValues(t);
+      E.padOpen.frequency.setValueAtTime(20000, t);
+    }
     chord.forEach((m,i) => E.voices[i].forEach(o => o.frequency.setTargetAtTime(mtof(m)*(o.__r || 1), t, .45)));
     E.padSwell.gain.setTargetAtTime(.7, t, .25);
     E.padSwell.gain.setTargetAtTime(.85, t+.7, 1.4);
@@ -1006,6 +1189,16 @@ function createEngine(){
   const VOW = {u:[325,700,2530], o:[450,800,2830], a:[800,1150,2900]};
   E.update = p => {
     const now = ac.currentTime, set = (prm, v, tc=.12) => prm.setTargetAtTime(v, now, tc);
+    const hifi = TONE.mode === 'hifi', tp = hifi ? 0 : TONE.tape;
+    set(E.wowG.gain, .0016*tp, .3); set(E.flutG.gain, .00011*tp, .3);
+    const pre = .25 + tp*.9;
+    set(E.tapePre.gain, pre, .3); set(E.tapePost.gain, 1/(pre*2.07), .3);
+    set(E.tapeLP.frequency, 20000*Math.pow(5200/20000, tp), .3);
+    set(E.hissG.gain, .012*tp, .3);
+    set(E.shimSend.gain, hifi ? TONE.shimmer*.42 : 0, .3);
+    E.drift.forEach(g => set(g.gain, hifi ? 6 : 0, .5));
+    set(E.breathG.gain, hifi ? .05 : 0, .3);
+    if (!hifi && E.padOpen.frequency.value < 19000) set(E.padOpen.frequency, 20000, .3);
     const {wind, smile, eyes} = p;
     set(E.master.gain, soundOn ? .68*(1 - eyes*.45) : 0, soundOn ? .4 : .15);
     set(E.masterLP.frequency, 16000*Math.pow(.07, eyes));
@@ -1058,7 +1251,7 @@ function scheduleStep(i, t){
   let midi = 0;
   if (plays){
     midi = 50 + 12*Math.floor(s.deg/5) + curChord.pc[s.deg % 5] + (s.deg >= 8 ? 12 : 0);
-    A.pluck(midi, t, s.vel * rnd(.85,1.05), cur);
+    A.playPluck(midi, t, s.vel * rnd(.85,1.05), cur);
   }
   let tomHit = 0;
   const tk = toms[i];
@@ -1352,8 +1545,8 @@ function petCritter(){
   critter.vy = 0; critter.hy = 0; critterHop(1.15);
   if (A && soundOn){
     const t = A.ac.currentTime + .01, pc = curChord.pc;
-    A.pluck(74 + pc[Math.random()*5|0], t, .75, cur);
-    A.pluck(74 + pc[Math.random()*5|0] + 12, t + .09, .55, cur);
+    A.playPluck(62 + pc[Math.random()*5|0], t, .75, cur);
+    A.playPluck(74 + pc[Math.random()*5|0], t + .09, .55, cur);
   }
   glints.push({x: critter.sx + rnd(-CR*.5, CR*.5), y: critter.sy - CR*1.4, life:0, v:.9});
 }
