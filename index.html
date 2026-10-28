@@ -144,11 +144,13 @@ input[type=range]:disabled{opacity:.85}
           <video id="camPreview" playsinline muted aria-label="Podgląd przedniej kamery"></video>
           <div class="sensor-info">
             <div><i class="dot" id="camDot"></i>Kamera: <span id="camStat">wyłączona</span></div>
+            <div id="micLine" hidden><i class="dot" id="micDot"></i>Mikrofon: <span id="micStat">wyłączony</span></div>
           </div>
           <button class="ghost" id="calBtn" type="button">Kalibruj</button>
         </div>
         <div class="toggles">
           <button class="ghost" id="camBtn" type="button" aria-pressed="true">Kamera: wł.</button>
+          <button class="ghost" id="micBtn" type="button" aria-pressed="true" hidden>Mikrofon: wł.</button>
         </div>
         <div class="row">
           <label for="sensBreath"><span>Czułość dmuchania<small>dziubek, policzki</small></span><output id="sensBreathOut"></output></label>
@@ -502,11 +504,13 @@ const MP_VER = '0.10.14';
 const MP_URL = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MP_VER}`;
 const FACE_MODEL = 'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task';
 const SENS = {on:false, camStream:null, lm:null, face:null, db:-100, floor:null, level:0,
-  sens:.5, sensSmile:.6, sensEyes:.6, camWant:true,
+  sens:.5, sensSmile:.6, sensEyes:.6, camWant:true, micWant:true, micActive:false,
   rawSmile:0, rawBlink:0, rawBlow:0, smile0:.08, blink0:.1, blow0:.05, smile:0, eyes:0, closedT:0, lostT:99, lastDetect:0, uiAcc:0};
 const SAVED = (() => { try { return JSON.parse(localStorage.getItem('lz-sens') || '{}'); } catch(_){ return {}; } })();
 if (typeof SAVED.cam === 'boolean') SENS.camWant = SAVED.cam;
-function saveSens(){ try { localStorage.setItem('lz-sens', JSON.stringify({b:SENS.sens, s:SENS.sensSmile, e:SENS.sensEyes, cam:SENS.camWant})); } catch(_){} }
+if (typeof SAVED.mic === 'boolean') SENS.micWant = SAVED.mic;
+const NATIVE = !!(window.LZNative && window.LZNative.isNative && window.LZNative.isNative());
+function saveSens(){ try { localStorage.setItem('lz-sens', JSON.stringify({b:SENS.sens, s:SENS.sensSmile, e:SENS.sensEyes, cam:SENS.camWant, mic:SENS.micWant})); } catch(_){} }
 ['sensBreath','sensSmile','sensEyes'].forEach((id,i) => { const v = [SAVED.b, SAVED.s, SAVED.e][i]; if (typeof v === 'number') $(id).value = Math.round(v*100); });
 bind('sensBreath', pct, v => { SENS.sens = v/100; saveSens(); });
 bind('sensSmile', pct, v => { SENS.sensSmile = v/100; saveSens(); });
@@ -528,8 +532,9 @@ function errText(e){
 }
 function sensorUI(){
   $('camBtn').textContent = 'Kamera: ' + (SENS.camWant ? 'wł.' : 'wył.'); $('camBtn').setAttribute('aria-pressed', String(SENS.camWant));
+  $('micBtn').textContent = 'Mikrofon: ' + (SENS.micWant ? 'wł.' : 'wył.'); $('micBtn').setAttribute('aria-pressed', String(SENS.micWant));
   const on = SENS.on;
-  $('wind').disabled = on && SENS.camWant;
+  $('wind').disabled = on && (SENS.camWant || (NATIVE && SENS.micWant));
   $('smile').disabled = on && SENS.camWant;
   $('eyes').disabled = on && SENS.camWant;
   if (!SENS.camWant) stat('cam', '', 'wyłączona');
@@ -562,9 +567,11 @@ function stopCam(){
 }
 function sensorsOn(){
   SENS.on = true; startSound(); sensorUI();
+  if (NATIVE){ LZNative.start(SENS.micWant, SENS.camWant); return; }
   if (SENS.camWant) startCam();
 }
 function sensorsOff(){
+  if (NATIVE){ LZNative.stop(); SENS.face = null; SENS.micActive = false; NAT.cam = NAT.mic = ''; stat('mic','','wyłączony'); }
   SENS.on = false; stopCam(); SENS.level = 0;
   stat('cam','','wyłączona');
   ['wind','smile','eyes'].forEach(id => { const el = $(id); el.disabled = false; el.dispatchEvent(new Event('input')); });
@@ -573,18 +580,64 @@ segGroup('srcSeg', 'src', v => { $('sensorBox').hidden = v !== 'sensors'; v === 
 $('camBtn').addEventListener('click', () => {
   SENS.camWant = !SENS.camWant; saveSens(); sensorUI();
   if (!SENS.on) return;
+  if (NATIVE){ LZNative.start(SENS.micWant, SENS.camWant); if (!SENS.camWant) ['smile','eyes'].forEach(id => $(id).dispatchEvent(new Event('input'))); return; }
   if (SENS.camWant) startCam(); else { stopCam(); ['smile','eyes'].forEach(id => $(id).dispatchEvent(new Event('input'))); }
 });
+$('micBtn').addEventListener('click', () => {
+  SENS.micWant = !SENS.micWant; saveSens(); sensorUI();
+  if (SENS.on && NATIVE) LZNative.start(SENS.micWant, SENS.camWant);
+});
+
+/* Inside the Android app the camera and microphone are read natively (no call mode, full audio quality) */
+const NAT = {cam:'', mic:''};
+window.__lzSensors = d => {
+  if (!SENS.on) return;
+  if (d.cam !== NAT.cam){
+    NAT.cam = d.cam;
+    if (d.cam === 'off') stat('cam','','wyłączona');
+    else if (d.cam === 'loading') stat('cam','wait','ładuję rozpoznawanie twarzy…');
+    else if (d.cam === 'ok') stat('cam','wait','szukam twarzy…');
+    else stat('cam','err', String(d.cam).replace(/^err:/,''));
+    SENS.face = d.cam === 'ok' ? true : null; SENS.lostT = 99;
+  }
+  if (d.mic !== NAT.mic){
+    NAT.mic = d.mic;
+    if (d.mic === 'ok'){ stat('mic','ok','słucham oddechu'); SENS.floor = null; }
+    else if (d.mic === 'off') stat('mic','','wyłączony');
+    else stat('mic','err', String(d.mic).replace(/^err:/,''));
+    SENS.micActive = d.mic === 'ok';
+  }
+  if (SENS.face && d.found){
+    SENS.rawSmile = d.smile; SENS.rawBlink = d.blink; SENS.rawBlow = d.puff;
+    if (SENS.lostT > .5) stat('cam','ok','widzę twarz');
+    SENS.lostT = 0;
+  }
+  if (SENS.micActive) SENS.db = d.db;
+};
+if (NATIVE){
+  $('micLine').hidden = false; $('micBtn').hidden = false;
+  document.querySelector('[data-src="sensors"]').textContent = 'Kamera i mikrofon';
+  $('sensHint').textContent = 'W aplikacji mikrofon nie psuje jakości dźwięku, także na słuchawkach Bluetooth. Dmuchnij w dół telefonu albo, z wyłączonym mikrofonem, złóż usta w dziubek. Uśmiech rozjaśnia scenę, zamknięte oczy sprowadzają noc.';
+  const sb = $('sensBreath').closest('.row').querySelector('small'); if (sb) sb.textContent = 'mikrofon lub dziubek';
+}
 sensorUI();
 $('calBtn').addEventListener('click', () => {
+  if (SENS.micActive && SENS.db > -99) SENS.floor = SENS.db;
   if (SENS.lostT < .5){ SENS.smile0 = SENS.rawSmile; SENS.blink0 = Math.min(.4, SENS.rawBlink); SENS.blow0 = Math.min(.3, SENS.rawBlow); }
   $('sensHint').textContent = 'Skalibrowane. Twoja obecna mina to teraz zero.';
 });
 function sensorsTick(dt){
   if (!SENS.on) return;
   let breathRaw = null;
+  if (SENS.micActive){
+    const db = SENS.db;
+    if (SENS.floor === null) SENS.floor = db;
+    if (db < SENS.floor) SENS.floor += (db - SENS.floor)*Math.min(1, dt*2); else SENS.floor += dt*.3;
+    breathRaw = clamp((db - SENS.floor - lerp(22, 5, SENS.sens))/20, 0, 1);
+  }
+  if (NATIVE && SENS.face && SENS.lostT > .6 && SENS.lostT - dt <= .6) stat('cam','wait','nie widzę twarzy');
   const v = $('camPreview');
-  if (SENS.face && v.readyState >= 2 && performance.now() - SENS.lastDetect > 110){
+  if (!NATIVE && SENS.face && v.readyState >= 2 && performance.now() - SENS.lastDetect > 110){
     SENS.lastDetect = performance.now();
     try {
       const res = SENS.face.detectForVideo(v, SENS.lastDetect);
@@ -604,7 +657,7 @@ function sensorsTick(dt){
   if (SENS.face){
     SENS.lostT += dt;
     const seen = SENS.lostT < 1;
-    breathRaw = seen ? clamp((SENS.rawBlow - SENS.blow0 - .05)/lerp(.7, .15, SENS.sens), 0, 1) : 0;
+    if (!SENS.micActive) breathRaw = seen ? clamp((SENS.rawBlow - SENS.blow0 - .05)/lerp(.7, .15, SENS.sens), 0, 1) : 0;
     if (seen){
       const sm = clamp((SENS.rawSmile - SENS.smile0 - .02)/lerp(.6, .12, SENS.sensSmile), 0, 1);
       SENS.smile += (sm - SENS.smile)*Math.min(1, dt*4);
