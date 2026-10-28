@@ -93,6 +93,8 @@ input[type=range]:focus-visible{outline:2px solid var(--frost);outline-offset:2p
 .dot{display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:6px;background:var(--muted);vertical-align:1px}
 .dot.ok{background:#8fdcae}.dot.wait{background:var(--warm)}.dot.err{background:#f08a8a}
 input[type=range]:disabled{opacity:.85}
+.toggles{display:flex;gap:8px;flex-wrap:wrap}
+.ghost[aria-pressed="true"]{background:rgba(233,240,251,.14);border-color:var(--frost)}
 .subhead{display:flex;justify-content:space-between;align-items:center;gap:10px;font-size:.86rem;font-weight:700;padding-top:2px}
 .tom{height:28px}
 .tom i{left:50%;right:auto;bottom:50%;transform:translate(-50%,50%);border-radius:50%;width:0;height:0;background:var(--warm)}
@@ -146,6 +148,10 @@ input[type=range]:disabled{opacity:.85}
           </div>
           <button class="ghost" id="calBtn" type="button">Kalibruj</button>
         </div>
+        <div class="toggles">
+          <button class="ghost" id="micBtn" type="button" aria-pressed="false">Mikrofon: wył.</button>
+          <button class="ghost" id="camBtn" type="button" aria-pressed="true">Kamera: wł.</button>
+        </div>
         <div class="row">
           <label for="sensBreath"><span>Czułość oddechu</span><output id="sensBreathOut"></output></label>
           <input type="range" id="sensBreath" min="0" max="100" value="50">
@@ -158,7 +164,7 @@ input[type=range]:disabled{opacity:.85}
           <label for="sensEyes"><span>Czułość oczu<small>zamknięcie</small></span><output id="sensEyesOut"></output></label>
           <input type="range" id="sensEyes" min="0" max="100" value="60">
         </div>
-        <p class="hint" id="sensHint">Dmuchnij w dół telefonu, uśmiechnij się, zamknij oczy na chwilę. „Kalibruj” ustawia obecną ciszę i neutralną minę jako punkt zero. Ustawienia czułości telefon zapamiętuje.</p>
+        <p class="hint" id="sensHint">Na Androidzie włączony mikrofon przełącza telefon w tryb rozmowy i dźwięk traci jakość. Bez mikrofonu dmuchanie rozpoznaje kamera: złóż usta w dziubek albo nadmij policzki, jak przy dmuchaniu. „Kalibruj” ustawia obecną ciszę i neutralną minę jako zero.</p>
       </div>
       <div class="seg" id="worldSeg" role="group" aria-label="Miejsce">
         <button class="segb" type="button" data-world="dolina" aria-pressed="true">Dolina</button>
@@ -497,10 +503,14 @@ const slotEls = slots.map((name, i) => {
 const MP_VER = '0.10.14';
 const MP_URL = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MP_VER}`;
 const FACE_MODEL = 'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task';
-const SENS = {on:false, streams:[], mic:null, face:null, db:-100, floor:null, level:0, sens:.5, sensSmile:.6, sensEyes:.6,
-  rawSmile:0, rawBlink:0, smile0:.08, blink0:.1, smile:0, eyes:0, closedT:0, lostT:99, lastDetect:0, uiAcc:0};
+const IS_ANDROID = /Android/i.test(navigator.userAgent);
+const SENS = {on:false, mic:null, micStream:null, camStream:null, lm:null, face:null, db:-100, floor:null, level:0,
+  sens:.5, sensSmile:.6, sensEyes:.6, micWant:!IS_ANDROID, camWant:true,
+  rawSmile:0, rawBlink:0, rawBlow:0, smile0:.08, blink0:.1, blow0:.05, smile:0, eyes:0, closedT:0, lostT:99, lastDetect:0, uiAcc:0};
 const SAVED = (() => { try { return JSON.parse(localStorage.getItem('lz-sens') || '{}'); } catch(_){ return {}; } })();
-function saveSens(){ try { localStorage.setItem('lz-sens', JSON.stringify({b:SENS.sens, s:SENS.sensSmile, e:SENS.sensEyes})); } catch(_){} }
+if (typeof SAVED.mic === 'boolean') SENS.micWant = SAVED.mic;
+if (typeof SAVED.cam === 'boolean') SENS.camWant = SAVED.cam;
+function saveSens(){ try { localStorage.setItem('lz-sens', JSON.stringify({b:SENS.sens, s:SENS.sensSmile, e:SENS.sensEyes, mic:SENS.micWant, cam:SENS.camWant})); } catch(_){} }
 ['sensBreath','sensSmile','sensEyes'].forEach((id,i) => { const v = [SAVED.b, SAVED.s, SAVED.e][i]; if (typeof v === 'number') $(id).value = Math.round(v*100); });
 bind('sensBreath', pct, v => { SENS.sens = v/100; saveSens(); });
 bind('sensSmile', pct, v => { SENS.sensSmile = v/100; saveSens(); });
@@ -514,70 +524,97 @@ function showVal(id, v){
 }
 const AUDIO_C = {echoCancellation:false, noiseSuppression:false, autoGainControl:false};
 const VIDEO_C = {facingMode:'user', width:{ideal:320}, height:{ideal:240}};
+const BLOCKED = 'W podglądzie Claude mikrofon i kamera są zablokowane. Otwórz aplikację z GitHub Pages na telefonie.';
 function errText(e){
   if (!window.isSecureContext) return 'potrzebny adres https (np. GitHub Pages)';
   if (e && e.name === 'NotAllowedError') return 'brak zgody lub zablokowane w tym podglądzie';
   if (e && e.name === 'NotFoundError') return 'nie znaleziono urządzenia';
   return 'niedostępny tutaj';
 }
-async function sensorsOn(){
-  SENS.on = true;
-  startSound();
-  ['wind','smile','eyes'].forEach(id => $(id).disabled = true);
-  stat('mic','wait','proszę o dostęp…'); stat('cam','wait','proszę o dostęp…');
-  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
-    stat('mic','err', errText()); stat('cam','err', errText());
-    $('sensHint').textContent = 'W podglądzie Claude mikrofon i kamera są zablokowane. Otwórz aplikację z GitHub Pages na telefonie.';
-    return;
-  }
-  let aStream = null, vStream = null, firstErr = null;
-  try {
-    const st = await navigator.mediaDevices.getUserMedia({audio:AUDIO_C, video:VIDEO_C});
-    aStream = new MediaStream(st.getAudioTracks()); vStream = new MediaStream(st.getVideoTracks()); SENS.streams.push(st);
-  } catch(e){
-    firstErr = e;
-    try { aStream = await navigator.mediaDevices.getUserMedia({audio:AUDIO_C}); SENS.streams.push(aStream); } catch(e2){ firstErr = e2; }
-    try { vStream = await navigator.mediaDevices.getUserMedia({video:VIDEO_C}); SENS.streams.push(vStream); } catch(e3){ firstErr = firstErr || e3; }
-  }
-  if (!SENS.on){ stopStreams(); return; }
-  if (aStream && aStream.getAudioTracks().length){
-    const src = A.ac.createMediaStreamSource(aStream), an = A.ac.createAnalyser();
-    an.fftSize = 1024; an.smoothingTimeConstant = .3; src.connect(an);
-    SENS.mic = {src, an, buf: new Float32Array(an.frequencyBinCount), maxBin: Math.max(2, Math.round(320/(A.ac.sampleRate/an.fftSize)))};
-    SENS.floor = null; stat('mic','ok','słucham oddechu');
-  } else stat('mic','err', errText(firstErr));
-  if (vStream && vStream.getVideoTracks().length){
-    const v = $('camPreview'); v.srcObject = vStream; try { await v.play(); } catch(_){}
+function sensorUI(){
+  $('micBtn').textContent = 'Mikrofon: ' + (SENS.micWant ? 'wł.' : 'wył.'); $('micBtn').setAttribute('aria-pressed', String(SENS.micWant));
+  $('camBtn').textContent = 'Kamera: ' + (SENS.camWant ? 'wł.' : 'wył.'); $('camBtn').setAttribute('aria-pressed', String(SENS.camWant));
+  const on = SENS.on;
+  $('wind').disabled = on && (SENS.micWant || SENS.camWant);
+  $('smile').disabled = on && SENS.camWant;
+  $('eyes').disabled = on && SENS.camWant;
+  if (!SENS.micWant) stat('mic', '', SENS.camWant ? 'wyłączony, dmuchanie rozpozna kamera' : 'wyłączony');
+  if (!SENS.camWant) stat('cam', '', 'wyłączona');
+}
+async function startMic(){
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){ stat('mic','err', errText()); $('sensHint').textContent = BLOCKED; return; }
+  stat('mic','wait','proszę o dostęp…');
+  let st;
+  try { st = await navigator.mediaDevices.getUserMedia({audio:AUDIO_C}); }
+  catch(e){ stat('mic','err', errText(e)); return; }
+  if (!SENS.on || !SENS.micWant){ st.getTracks().forEach(t => t.stop()); return; }
+  SENS.micStream = st;
+  const src = A.ac.createMediaStreamSource(st), an = A.ac.createAnalyser();
+  an.fftSize = 1024; an.smoothingTimeConstant = .3; src.connect(an);
+  SENS.mic = {src, an, buf: new Float32Array(an.frequencyBinCount), maxBin: Math.max(2, Math.round(320/(A.ac.sampleRate/an.fftSize)))};
+  SENS.floor = null; stat('mic','ok','słucham oddechu');
+}
+function stopMic(){
+  if (SENS.micStream){ SENS.micStream.getTracks().forEach(t => t.stop()); SENS.micStream = null; }
+  if (SENS.mic){ try { SENS.mic.src.disconnect(); } catch(_){} SENS.mic = null; }
+  SENS.level = 0;
+}
+async function startCam(){
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){ stat('cam','err', errText()); $('sensHint').textContent = BLOCKED; return; }
+  stat('cam','wait','proszę o dostęp…');
+  let st;
+  try { st = await navigator.mediaDevices.getUserMedia({video:VIDEO_C}); }
+  catch(e){ stat('cam','err', errText(e)); return; }
+  if (!SENS.on || !SENS.camWant){ st.getTracks().forEach(t => t.stop()); return; }
+  SENS.camStream = st;
+  const v = $('camPreview'); v.srcObject = st; try { await v.play(); } catch(_){}
+  if (!SENS.lm){
     stat('cam','wait','ładuję rozpoznawanie twarzy…');
     try {
       let vision;
       try { vision = await import(MP_URL); } catch(_){ vision = await import(MP_URL + '/vision_bundle.mjs'); }
       const files = await vision.FilesetResolver.forVisionTasks(MP_URL + '/wasm');
       const opts = d => ({baseOptions:{modelAssetPath:FACE_MODEL, delegate:d}, outputFaceBlendshapes:true, runningMode:'VIDEO', numFaces:1});
-      let lm; try { lm = await vision.FaceLandmarker.createFromOptions(files, opts('GPU')); } catch(_){ lm = await vision.FaceLandmarker.createFromOptions(files, opts('CPU')); }
-      if (!SENS.on){ lm.close && lm.close(); return; }
-      SENS.face = lm; stat('cam','wait','szukam twarzy…');
-    } catch(e){ stat('cam','err','nie udało się wczytać rozpoznawania twarzy'); }
-  } else stat('cam','err', errText(firstErr));
-  if (!SENS.mic && !vStream) $('sensHint').textContent = 'W podglądzie Claude mikrofon i kamera są zablokowane. Otwórz aplikację z GitHub Pages na telefonie.';
+      try { SENS.lm = await vision.FaceLandmarker.createFromOptions(files, opts('GPU')); } catch(_){ SENS.lm = await vision.FaceLandmarker.createFromOptions(files, opts('CPU')); }
+    } catch(e){ stat('cam','err','nie udało się wczytać rozpoznawania twarzy'); return; }
+  }
+  if (!SENS.on || !SENS.camWant) return;
+  SENS.face = SENS.lm; SENS.lostT = 99; stat('cam','wait','szukam twarzy…');
 }
-function stopStreams(){ SENS.streams.forEach(st => st.getTracks().forEach(t => t.stop())); SENS.streams = []; }
+function stopCam(){
+  if (SENS.camStream){ SENS.camStream.getTracks().forEach(t => t.stop()); SENS.camStream = null; }
+  $('camPreview').srcObject = null; SENS.face = null;
+}
+function sensorsOn(){
+  SENS.on = true; startSound(); sensorUI();
+  if (SENS.micWant) startMic();
+  if (SENS.camWant) startCam();
+}
 function sensorsOff(){
-  SENS.on = false; stopStreams();
-  if (SENS.mic){ try { SENS.mic.src.disconnect(); } catch(_){} SENS.mic = null; }
-  if (SENS.face){ try { SENS.face.close(); } catch(_){} SENS.face = null; }
-  $('camPreview').srcObject = null;
+  SENS.on = false; stopMic(); stopCam();
   stat('mic','','wyłączony'); stat('cam','','wyłączona');
   ['wind','smile','eyes'].forEach(id => { const el = $(id); el.disabled = false; el.dispatchEvent(new Event('input')); });
 }
 segGroup('srcSeg', 'src', v => { $('sensorBox').hidden = v !== 'sensors'; v === 'sensors' ? sensorsOn() : sensorsOff(); });
+$('micBtn').addEventListener('click', () => {
+  SENS.micWant = !SENS.micWant; saveSens(); sensorUI();
+  if (!SENS.on) return;
+  SENS.micWant ? startMic() : stopMic();
+});
+$('camBtn').addEventListener('click', () => {
+  SENS.camWant = !SENS.camWant; saveSens(); sensorUI();
+  if (!SENS.on) return;
+  if (SENS.camWant) startCam(); else { stopCam(); ['smile','eyes'].forEach(id => $(id).dispatchEvent(new Event('input'))); }
+});
+sensorUI();
 $('calBtn').addEventListener('click', () => {
   if (SENS.mic && SENS.db > -99) SENS.floor = SENS.db;
-  if (SENS.lostT < .5){ SENS.smile0 = SENS.rawSmile; SENS.blink0 = Math.min(.4, SENS.rawBlink); }
+  if (SENS.lostT < .5){ SENS.smile0 = SENS.rawSmile; SENS.blink0 = Math.min(.4, SENS.rawBlink); SENS.blow0 = Math.min(.3, SENS.rawBlow); }
   $('sensHint').textContent = 'Skalibrowane. Cisza i obecna mina to teraz zero.';
 });
 function sensorsTick(dt){
   if (!SENS.on) return;
+  let breathRaw = null;
   if (SENS.mic){
     const {an, buf, maxBin} = SENS.mic;
     an.getFloatFrequencyData(buf);
@@ -586,10 +623,7 @@ function sensorsTick(dt){
     SENS.db = db;
     if (SENS.floor === null) SENS.floor = db;
     if (db < SENS.floor) SENS.floor += (db - SENS.floor)*Math.min(1, dt*2); else SENS.floor += dt*.3;
-    const raw = clamp((db - SENS.floor - lerp(22, 5, SENS.sens))/20, 0, 1);
-    const k = 1 - Math.exp(-dt/(raw > SENS.level ? .12 : .7));
-    SENS.level += (raw - SENS.level)*k;
-    target.wind = SENS.level;
+    breathRaw = clamp((db - SENS.floor - lerp(22, 5, SENS.sens))/20, 0, 1);
   }
   const v = $('camPreview');
   if (SENS.face && v.readyState >= 2 && performance.now() - SENS.lastDetect > 110){
@@ -601,6 +635,7 @@ function sensorsTick(dt){
         const g = n => { const c = bs.find(c => c.categoryName === n); return c ? c.score : 0; };
         SENS.rawBlink = (g('eyeBlinkLeft') + g('eyeBlinkRight'))/2;
         SENS.rawSmile = (g('mouthSmileLeft') + g('mouthSmileRight'))/2;
+        SENS.rawBlow = Math.max(g('cheekPuff')*1.3, g('mouthFunnel'), g('mouthPucker')*.85);
         if (SENS.lostT > .5) stat('cam','ok','widzę twarz');
         SENS.lostT = 0;
       } else {
@@ -610,7 +645,9 @@ function sensorsTick(dt){
   }
   if (SENS.face){
     SENS.lostT += dt;
-    if (SENS.lostT < 1){
+    const seen = SENS.lostT < 1;
+    if (!SENS.mic) breathRaw = seen ? clamp((SENS.rawBlow - SENS.blow0 - .05)/lerp(.7, .15, SENS.sens), 0, 1) : 0;
+    if (seen){
       const sm = clamp((SENS.rawSmile - SENS.smile0 - .02)/lerp(.6, .12, SENS.sensSmile), 0, 1);
       SENS.smile += (sm - SENS.smile)*Math.min(1, dt*4);
       const closed = SENS.rawBlink > Math.max(lerp(.6, .22, SENS.sensEyes), SENS.blink0 + lerp(.35, .1, SENS.sensEyes));
@@ -622,8 +659,17 @@ function sensorsTick(dt){
     }
     target.smile = SENS.smile; target.eyes = SENS.eyes;
   }
+  if (breathRaw !== null){
+    const k = 1 - Math.exp(-dt/(breathRaw > SENS.level ? .12 : .7));
+    SENS.level += (breathRaw - SENS.level)*k;
+    target.wind = SENS.level;
+  }
   SENS.uiAcc += dt;
-  if (SENS.uiAcc > .1){ SENS.uiAcc = 0; showVal('wind', target.wind); showVal('smile', target.smile); showVal('eyes', target.eyes); }
+  if (SENS.uiAcc > .1){
+    SENS.uiAcc = 0;
+    if ($('wind').disabled) showVal('wind', target.wind);
+    if ($('smile').disabled){ showVal('smile', target.smile); showVal('eyes', target.eyes); }
+  }
 }
 
 /* Tabs */
