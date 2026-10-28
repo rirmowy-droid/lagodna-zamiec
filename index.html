@@ -350,8 +350,8 @@ const cur = {wind:0, smile:0, eyes:0};
 const P = {chor:.55, tempo:66, gestosc:.45};
 const FX = {
   drone:  {vol:70, chorus:25, delay:0,  reverb:50},
-  pad:    {vol:65, chorus:45, delay:10, reverb:75},
-  pluck:  {vol:60, chorus:15, delay:55, reverb:65},
+  pad:    {vol:65, chorus:25, delay:10, reverb:45},
+  pluck:  {vol:60, chorus:10, delay:35, reverb:40},
   zamiec: {vol:45, chorus:0,  delay:0,  reverb:40},
   toms:   {vol:55, chorus:0,  delay:15, reverb:55},
   amb:    {vol:75, chorus:0,  delay:0,  reverb:70},
@@ -750,7 +750,7 @@ function createEngine(){
   const revHP = node('BiquadFilter',{type:'highpass', frequency:180});
   const rev = node('Convolver'); rev.buffer = makeIR(ac, 5.5, 2.2);
   E.revOut = node('Gain',{gain:1});
-  const revLP = node('BiquadFilter',{type:'lowpass', frequency:5500, Q:.4});
+  const revLP = node('BiquadFilter',{type:'lowpass', frequency:3800, Q:.4});
   E.revIn.connect(pre).connect(revHP).connect(rev).connect(revLP).connect(E.revOut).connect(E.master);
 
   E.delIn = node('Gain');
@@ -779,7 +779,7 @@ function createEngine(){
     const l = node('Gain',{gain:0}); chOut.connect(l).connect(E.delIn);
     return {vol, chorus:wet, rev:r, del:l};
   };
-  E.S = {drone: strip(.55), pad: strip(.42), pluck: strip(.38), zamiec: strip(.55), toms: strip(.6), amb: strip(.6)};
+  E.S = {drone: strip(.8), pad: strip(.95), pluck: strip(.9), zamiec: strip(.55), toms: strip(.6), amb: strip(.6)};
 
   // Drone: D2 with fifth, gentle saturation driven by wind
   const droneMix = node('Gain',{gain:.16});
@@ -804,16 +804,26 @@ function createEngine(){
   E.padSwell = node('Gain',{gain:.85});
   lfo(.08, .12, E.padSwell.gain);
   const vib = lfo(4.7, 4);
-  E.voices = curChord.v.map(m => [-10, 0, 10].map(dt => {
-    const o = node('Oscillator',{type:'sawtooth', frequency:mtof(m), detune:dt + rnd(-3,3)});
-    vib.connect(o.detune); o.connect(padMix); o.start(); return o;
-  }));
-  padMix.connect(E.padSwell);
-  E.padLP = node('BiquadFilter',{type:'lowpass', frequency:1100, Q:.4});
-  lfo(.06, 250, E.padLP.frequency);
-  E.strings = node('Gain',{gain:.5});
-  E.padSwell.connect(E.padLP).connect(E.strings);
+  const bodyMix = node('Gain',{gain:.11});
+  E.voices = curChord.v.map((m, vi) => {
+    const list = [-8, 8].map(dt => {
+      const o = node('Oscillator',{type:'sawtooth', frequency:mtof(m), detune:dt + rnd(-3,3)});
+      vib.connect(o.detune); o.connect(padMix); o.start(); return o;
+    });
+    // warm body: a soft triangle on every voice, plus a sine an octave down under the lowest voice
+    const b = node('Oscillator',{type:'triangle', frequency:mtof(m), detune:rnd(-3,3)}); vib.connect(b.detune); b.connect(bodyMix); b.start(); list.push(b);
+    if (vi === 0){ const sub = node('Oscillator',{type:'sine', frequency:mtof(m)/2}); sub.__r = .5; const sg = node('Gain',{gain:1.4}); sub.connect(sg).connect(bodyMix); sub.start(); list.push(sub); }
+    return list;
+  });
+  padMix.connect(E.padSwell); bodyMix.connect(E.padSwell);
+  E.padLP = node('BiquadFilter',{type:'lowpass', frequency:1400, Q:.5});
+  lfo(.06, 220, E.padLP.frequency);
+  const padLP2 = node('BiquadFilter',{type:'lowpass', frequency:3200, Q:.5});
+  E.strings = node('Gain',{gain:.6});
+  E.padSwell.connect(E.padLP).connect(padLP2).connect(E.strings);
   E.choir = node('Gain',{gain:1.5});
+  const chest = node('BiquadFilter',{type:'lowpass', frequency:650, Q:.5}), chestG = node('Gain',{gain:1.2});
+  E.padSwell.connect(chest).connect(chestG).connect(E.choir);
   E.formants = [[450,5,1],[800,7,.7],[2830,9,.25]].map(([f,q,g]) => {
     const bp = node('BiquadFilter',{type:'bandpass', frequency:f, Q:q}), gg = node('Gain',{gain:g*3.2});
     E.padSwell.connect(bp).connect(gg).connect(E.choir); return bp;
@@ -890,20 +900,21 @@ function createEngine(){
   };
 
   E.pluck = (midi, t, vel, p) => {
-    const f = mtof(midi), dec = 1.7 + p.eyes*1.4;
+    const f = mtof(midi), dec = 2.3 + p.eyes*1.4;
     const o1 = node('Oscillator',{type:'triangle', frequency:f});
+    const o0 = node('Oscillator',{type:'sine', frequency:f}), g0 = node('Gain',{gain:.7});
     const o2 = node('Oscillator',{type:'sine', frequency:f*2, detune:5}), g2 = node('Gain',{gain:.35});
     const o3 = node('Oscillator',{type:'sine', frequency:f*4.02}), g3 = node('Gain',{gain:0});
-    g3.gain.setValueAtTime(.14, t); g3.gain.exponentialRampToValueAtTime(.0001, t+.3);
+    g3.gain.setValueAtTime(.06, t); g3.gain.exponentialRampToValueAtTime(.0001, t+.25);
     const lp = node('BiquadFilter',{type:'lowpass', Q:.8});
-    const peak = (2600 + p.smile*3000 + p.wind*1200) * (1 - p.eyes*.65) * (.75 + tod.bright*.5);
-    lp.frequency.setValueAtTime(peak, t); lp.frequency.exponentialRampToValueAtTime(Math.max(320, f*1.3), t+.6);
+    const peak = (2400 + p.smile*2200 + p.wind*900) * (1 - p.eyes*.65) * (.75 + tod.bright*.5);
+    lp.frequency.setValueAtTime(peak, t); lp.frequency.exponentialRampToValueAtTime(Math.max(700, f*2.5), t+.7);
     const env = node('Gain',{gain:0});
-    env.gain.setValueAtTime(0, t); env.gain.linearRampToValueAtTime(vel*.32, t+.005); env.gain.exponentialRampToValueAtTime(.0001, t+dec);
+    env.gain.setValueAtTime(0, t); env.gain.linearRampToValueAtTime(vel*.42, t+.006); env.gain.exponentialRampToValueAtTime(.0001, t+dec);
     const out = ac.createStereoPanner ? node('StereoPanner',{pan:rnd(-.65,.65)}) : node('Gain');
-    o1.connect(lp); o2.connect(g2).connect(lp); o3.connect(g3).connect(lp);
+    o1.connect(lp); o0.connect(g0).connect(lp); o2.connect(g2).connect(lp); o3.connect(g3).connect(lp);
     lp.connect(env).connect(out).connect(E.S.pluck.vol);
-    [o1,o2,o3].forEach(o => { o.start(t); o.stop(t+dec+.1); });
+    [o0,o1,o2,o3].forEach(o => { o.start(t); o.stop(t+dec+.1); });
   };
 
   // Soft tuned toms (felt mallet): pitched sine body + membrane overtone + short noise tap
@@ -930,7 +941,7 @@ function createEngine(){
   };
 
   E.setChord = (chord, t) => {
-    chord.forEach((m,i) => E.voices[i].forEach(o => o.frequency.setTargetAtTime(mtof(m), t, .45)));
+    chord.forEach((m,i) => E.voices[i].forEach(o => o.frequency.setTargetAtTime(mtof(m)*(o.__r || 1), t, .45)));
     E.padSwell.gain.setTargetAtTime(.7, t, .25);
     E.padSwell.gain.setTargetAtTime(.85, t+.7, 1.4);
   };
@@ -939,10 +950,10 @@ function createEngine(){
   E.update = p => {
     const now = ac.currentTime, set = (prm, v, tc=.12) => prm.setTargetAtTime(v, now, tc);
     const {wind, smile, eyes} = p;
-    set(E.master.gain, soundOn ? .85*(1 - eyes*.45) : 0, soundOn ? .4 : .15);
+    set(E.master.gain, soundOn ? .68*(1 - eyes*.45) : 0, soundOn ? .4 : .15);
     set(E.masterLP.frequency, 16000*Math.pow(.07, eyes));
     set(E.revIn.gain, 1 + eyes*.8);
-    set(E.revOut.gain, MIX.poglos/100*1.35*(1 + tod.night*.25));
+    set(E.revOut.gain, MIX.poglos/100*.95*(1 + tod.night*.25));
     set(E.fb.gain, MIX.fb/100*.78);
     const beat = 60/P.tempo;
     set(E.dL.delayTime, beat*MIX.echo, .3); set(E.dR.delayTime, beat*MIX.echo, .3);
@@ -953,12 +964,12 @@ function createEngine(){
     }
     set(E.drive.gain, .35 + wind*1.8);
     const spk = playMode === 'speaker';
-    set(E.masterHP.frequency, spk ? 150 : 28, .3);
+    set(E.masterHP.frequency, spk ? 110 : 28, .3);
     set(E.droneSub.gain, spk ? .3 : 1.2, .3);
     set(E.droneUp.gain, spk ? 1.5 : .55, .3);
     set(E.droneLP.frequency, (380 + wind*1400 + smile*350) * (1 - eyes*.45) * (.85 + tod.bright*.3));
     set(E.droneExp.gain, 1/(1 + wind*.9));
-    set(E.padLP.frequency, (1000 + smile*1500 + wind*700) * (1 - eyes*.5) * (.7 + tod.bright*.6));
+    set(E.padLP.frequency, (1400 + smile*1400 + wind*700) * (1 - eyes*.5) * (.7 + tod.bright*.6));
     const v1 = smile > eyes ? VOW.a : VOW.u, k = Math.max(smile, eyes);
     E.formants.forEach((bp,i) => set(bp.frequency, lerp(VOW.o[i], v1[i], k), .3));
     set(E.strings.gain, (1 - P.chor) * .9);
@@ -989,7 +1000,7 @@ function scheduleStep(i, t){
   const plays = s.r < P.gestosc*(.75 + tod.bright*.4) && (s.r < .02 || Math.random() < thin);
   let midi = 0;
   if (plays){
-    midi = 62 + 12*Math.floor(s.deg/5) + curChord.pc[s.deg % 5];
+    midi = 50 + 12*Math.floor(s.deg/5) + curChord.pc[s.deg % 5] + (s.deg >= 8 ? 12 : 0);
     A.pluck(midi, t, s.vel * rnd(.85,1.05), cur);
   }
   let tomHit = 0;
@@ -1162,7 +1173,7 @@ function drainQueue(){
       if (nowStep >= 0){ stepBtns[nowStep].classList.remove('now'); tomBtns[nowStep].classList.remove('now'); }
       nowStep = e.i; stepBtns[nowStep].classList.add('now'); tomBtns[nowStep].classList.add('now');
       if (e.midi && soundOn){
-        const gx = (.08 + (e.midi-62)/24*.84)*W + rnd(-20,20), gy = H*rnd(.1,.42);
+        const gx = (.08 + (e.midi-50)/36*.84)*W + rnd(-20,20), gy = H*rnd(.1,.42);
         glints.push({x:gx, y:gy, life:0, v:e.vel});
         critter.look = {x:gx, y:gy, t:T};
       }
