@@ -582,7 +582,7 @@ function sensorsTick(dt){
     target.wind = SENS.level;
   }
   const v = $('camPreview');
-  if (SENS.face && v.readyState >= 2 && performance.now() - SENS.lastDetect > 75){
+  if (SENS.face && v.readyState >= 2 && performance.now() - SENS.lastDetect > 110){
     SENS.lastDetect = performance.now();
     try {
       const res = SENS.face.detectForVideo(v, SENS.lastDetect);
@@ -720,7 +720,8 @@ function brownBuffer(ac, sec){
 
 function createEngine(){
   const AC = window.AudioContext || window.webkitAudioContext;
-  const ac = new AC();
+  let ac;
+  try { ac = new AC({latencyHint:'playback'}); } catch(_){ ac = new AC(); }
   const E = {ac};
   const node = (type, props={}) => { const n = ac['create'+type](); for (const k in props){ if (n[k] instanceof AudioParam) n[k].value = props[k]; else n[k] = props[k]; } return n; };
   const lfo = (freq, depth, ...targets) => { const o = node('Oscillator',{frequency:freq}), g = node('Gain',{gain:depth}); o.connect(g); targets.forEach(t => g.connect(t)); o.start(); return g; };
@@ -736,7 +737,7 @@ function createEngine(){
   E.revIn = node('Gain');
   const pre = node('Delay',{delayTime:.035});
   const revHP = node('BiquadFilter',{type:'highpass', frequency:180});
-  const rev = node('Convolver'); rev.buffer = makeIR(ac, 7.5, 2.4);
+  const rev = node('Convolver'); rev.buffer = makeIR(ac, 5.5, 2.2);
   E.revOut = node('Gain',{gain:1});
   E.revIn.connect(pre).connect(revHP).connect(rev).connect(E.revOut).connect(E.master);
 
@@ -992,7 +993,7 @@ function tick(){
   }
   if (now > A.amb.crack){ if (world === 'dolina' && soundOn) A.crackle(now + .05); A.amb.crack = now + rnd(2,6); }
   if (now > A.amb.bell){ if (world === 'dolina' && soundOn) A.bell(now + .05, mode === 'minor'); A.amb.bell = now + rnd(16,32); }
-  while (seq.next < ac.currentTime + .15){
+  while (seq.next < ac.currentTime + .35){
     scheduleStep(seq.step, seq.next);
     seq.next += 60/P.tempo/2;
     seq.step = (seq.step + 1) % 16;
@@ -1005,7 +1006,7 @@ function startSound(){
   if (!A){
     A = createEngine();
     seq.next = A.ac.currentTime + .15; seq.step = 0;
-    seq.timer = setInterval(tick, 30);
+    seq.timer = setInterval(tick, 25);
   }
   A.ac.resume();
   soundOn = true; A.update(cur);
@@ -1056,7 +1057,7 @@ function ridgeFn(base, amp){
 }
 
 function build(){
-  DPR = Math.min(window.devicePixelRatio || 1, 1.75);
+  DPR = Math.min(window.devicePixelRatio || 1, 1.5);
   W = innerWidth; H = innerHeight;
   cv.width = W*DPR; cv.height = H*DPR;
   ctx.setTransform(DPR,0,0,DPR,0,0);
