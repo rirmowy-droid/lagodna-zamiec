@@ -112,7 +112,7 @@ input[type=range]:disabled{opacity:.85}
   </div>
   <div class="actions">
     <button class="pill" id="soundBtn" type="button" hidden>Wycisz</button>
-    <button class="pill" id="toggle" type="button" aria-expanded="true" aria-controls="sheet">Ukryj panel</button>
+    <button class="pill" id="toggle" type="button" aria-expanded="true" aria-controls="sheet" hidden>Ukryj panel</button>
   </div>
 </header>
 
@@ -124,7 +124,7 @@ input[type=range]:disabled{opacity:.85}
   </div>
 </div>
 
-<div class="dock">
+<div class="dock" id="dock" hidden>
   <div class="sheet" id="sheet">
     <div class="tabs" role="tablist" aria-label="Panel sterowania">
       <button class="tab" role="tab" id="tab-scena" aria-selected="true" aria-controls="p-scena">Scena</button>
@@ -225,6 +225,13 @@ input[type=range]:disabled{opacity:.85}
         </div>
       </div>
       <div class="grid2" id="mixCtl" hidden>
+        <div class="row">
+          <span class="lbl">Odtwarzanie</span>
+          <div class="seg" id="playSeg" role="group" aria-label="Odtwarzanie">
+            <button class="segb" type="button" data-play="speaker" aria-pressed="true">Głośnik telefonu</button>
+            <button class="segb" type="button" data-play="phones" aria-pressed="false">Słuchawki</button>
+          </div>
+        </div>
         <div class="row">
           <label for="ambVol"><span>Odgłosy miejsca<small>lód, dzwon, ulica</small></span><output id="ambVolOut"></output></label>
           <input type="range" id="ambVol" min="0" max="100" value="75">
@@ -425,6 +432,9 @@ segGroup('instSeg', 'inst', name => {
 fxSet.vol(FX.drone.vol); fxSet.chorus(FX.drone.chorus); fxSet.delay(FX.drone.delay); fxSet.reverb(FX.drone.reverb);
 segGroup('echoSeg', 'echo', v => MIX.echo = +v);
 bind('ambVol', pct, v => FX.amb.vol = v);
+let playMode = (() => { try { return localStorage.getItem('lz-play') || 'speaker'; } catch(_){ return 'speaker'; } })();
+document.querySelectorAll('#playSeg button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.play === playMode)));
+segGroup('playSeg', 'play', v => { playMode = v; try { localStorage.setItem('lz-play', v); } catch(_){} });
 segGroup('worldSeg', 'world', v => { worldFade.to = v; });
 segGroup('todSeg', 'speed', v => todSpeed = +v);
 $('tod').addEventListener('input', () => { todP = $('tod').value/1000; tod = todAt(todP); todSync(); });
@@ -692,7 +702,7 @@ function makeIR(ac, sec, decay){
   for (let c=0; c<2; c++){
     const d = b.getChannelData(c); let y = 0;
     for (let i=0; i<len; i++){
-      const t = i/len, a = .8 - .68*t;
+      const t = i/len, a = .42 - .37*t;
       y += a*((Math.random()*2-1) - y);
       d[i] = y * Math.pow(1-t, decay) * Math.min(1, i/(sr*.03));
     }
@@ -729,8 +739,9 @@ function createEngine(){
   // Master
   E.master = node('Gain',{gain:0});
   E.masterLP = node('BiquadFilter',{type:'lowpass', frequency:16000, Q:.5});
-  const comp = node('DynamicsCompressor',{threshold:-20, knee:14, ratio:3, attack:.03, release:.4});
-  E.master.connect(E.masterLP).connect(comp).connect(ac.destination);
+  E.masterHP = node('BiquadFilter',{type:'highpass', frequency:150, Q:.6});
+  const comp = node('DynamicsCompressor',{threshold:-14, knee:10, ratio:2.5, attack:.02, release:.35});
+  E.master.connect(E.masterLP).connect(E.masterHP).connect(comp).connect(ac.destination);
 
   // Shared buses: dry, reverb, ping-pong delay
   const dry = node('Gain'); dry.connect(E.master);
@@ -739,7 +750,8 @@ function createEngine(){
   const revHP = node('BiquadFilter',{type:'highpass', frequency:180});
   const rev = node('Convolver'); rev.buffer = makeIR(ac, 5.5, 2.2);
   E.revOut = node('Gain',{gain:1});
-  E.revIn.connect(pre).connect(revHP).connect(rev).connect(E.revOut).connect(E.master);
+  const revLP = node('BiquadFilter',{type:'lowpass', frequency:5500, Q:.4});
+  E.revIn.connect(pre).connect(revHP).connect(rev).connect(revLP).connect(E.revOut).connect(E.master);
 
   E.delIn = node('Gain');
   const dL = node('Delay',{delayTime:.5}), dR = node('Delay',{delayTime:.5});
@@ -758,7 +770,7 @@ function createEngine(){
     vol.connect(chIn); chIn.connect(chOut);
     const wet = node('Gain',{gain:0}), m = ac.createChannelMerger(2);
     [[.012,.31,0],[.017,.43,1]].forEach(([d,f,ch]) => {
-      const dl = node('Delay',{delayTime:d}); lfo(f, .0035, dl.delayTime);
+      const dl = node('Delay',{delayTime:d}); lfo(f, .002, dl.delayTime);
       chIn.connect(dl); dl.connect(m, 0, ch);
     });
     m.connect(wet).connect(chOut);
@@ -771,14 +783,17 @@ function createEngine(){
 
   // Drone: D2 with fifth, gentle saturation driven by wind
   const droneMix = node('Gain',{gain:.16});
-  [[73.42,'sawtooth',-7,1],[73.42,'sawtooth',7,1],[73.42,'sine',0,1.6],[110,'sawtooth',3,.45],[146.83,'triangle',-4,.5]].forEach(([f,t,dt,g]) => {
+  E.droneSub = node('Gain',{gain:.35}); E.droneUp = node('Gain',{gain:1.5});
+  E.droneSub.connect(droneMix); E.droneUp.connect(droneMix);
+  [[73.42,'sawtooth',-7,1,droneMix],[73.42,'sawtooth',7,1,droneMix],[73.42,'sine',0,1,E.droneSub],[110,'sawtooth',3,.45,droneMix],
+   [146.83,'triangle',-4,.5,E.droneUp],[146.83,'sawtooth',5,.25,E.droneUp]].forEach(([f,t,dt,g,dest]) => {
     const o = node('Oscillator',{type:t, frequency:f, detune:dt}), gg = node('Gain',{gain:g});
-    o.connect(gg).connect(droneMix); o.start();
+    o.connect(gg).connect(dest); o.start();
   });
-  E.drive = node('Gain',{gain:.7});
+  E.drive = node('Gain',{gain:.35});
   const shaper = node('WaveShaper'); const curve = new Float32Array(1024);
   for (let i=0;i<1024;i++){ const x = i/1023*2-1; curve[i] = Math.tanh(2.4*x)/Math.tanh(2.4); }
-  shaper.curve = curve; shaper.oversample = '2x';
+  shaper.curve = curve; shaper.oversample = '4x';
   E.droneLP = node('BiquadFilter',{type:'lowpass', frequency:380, Q:1.2});
   lfo(.045, 90, E.droneLP.frequency);
   E.droneExp = node('Gain',{gain:1});
@@ -799,7 +814,7 @@ function createEngine(){
   E.strings = node('Gain',{gain:.5});
   E.padSwell.connect(E.padLP).connect(E.strings);
   E.choir = node('Gain',{gain:1.5});
-  E.formants = [[450,7,1],[800,9,.7],[2830,12,.3]].map(([f,q,g]) => {
+  E.formants = [[450,5,1],[800,7,.7],[2830,9,.25]].map(([f,q,g]) => {
     const bp = node('BiquadFilter',{type:'bandpass', frequency:f, Q:q}), gg = node('Gain',{gain:g*3.2});
     E.padSwell.connect(bp).connect(gg).connect(E.choir); return bp;
   });
@@ -820,7 +835,7 @@ function createEngine(){
     E.windBands.push(bp);
   });
   const ws = node('BufferSource'); ws.buffer = pink; ws.loop = true;
-  E.whistle = node('BiquadFilter',{type:'bandpass', frequency:1150, Q:16});
+  E.whistle = node('BiquadFilter',{type:'bandpass', frequency:1150, Q:10});
   lfo(.05, 320, E.whistle.frequency);
   E.whistleG = node('Gain',{gain:0});
   ws.connect(E.whistle).connect(E.whistleG).connect(E.windExp); ws.start(0, 2.3);
@@ -833,7 +848,7 @@ function createEngine(){
   const tLP = node('BiquadFilter',{type:'lowpass', frequency:650, Q:.4}), tHP = node('BiquadFilter',{type:'highpass', frequency:140});
   const tG = node('Gain',{gain:.45}); lfo(.025, .18, tG.gain);
   traffic.connect(tHP).connect(tLP).connect(tG).connect(E.cityG); traffic.start();
-  const humG = node('Gain',{gain:.02}), humLP = node('BiquadFilter',{type:'lowpass', frequency:900});
+  const humG = node('Gain',{gain:.007}), humLP = node('BiquadFilter',{type:'lowpass', frequency:900});
   [[100,1],[200,.6],[300,.35],[400,.2],[600,.08]].forEach(([f,g]) => { const o = node('Oscillator',{frequency:f}), gg = node('Gain',{gain:g}); o.connect(gg).connect(humLP); o.start(); });
   humLP.connect(humG).connect(E.cityG);
   lfo(.17, .004, humG.gain);
@@ -936,7 +951,11 @@ function createEngine(){
       set(s.vol.gain, f.vol/100); set(s.chorus.gain, f.chorus/100*.9);
       set(s.rev.gain, f.reverb/100*1.5); set(s.del.gain, f.delay/100);
     }
-    set(E.drive.gain, .7 + wind*2.6);
+    set(E.drive.gain, .35 + wind*1.8);
+    const spk = playMode === 'speaker';
+    set(E.masterHP.frequency, spk ? 150 : 28, .3);
+    set(E.droneSub.gain, spk ? .3 : 1.2, .3);
+    set(E.droneUp.gain, spk ? 1.5 : .55, .3);
     set(E.droneLP.frequency, (380 + wind*1400 + smile*350) * (1 - eyes*.45) * (.85 + tod.bright*.3));
     set(E.droneExp.gain, 1/(1 + wind*.9));
     set(E.padLP.frequency, (1000 + smile*1500 + wind*700) * (1 - eyes*.5) * (.7 + tod.bright*.6));
@@ -945,11 +964,11 @@ function createEngine(){
     set(E.strings.gain, (1 - P.chor) * .9);
     set(E.choir.gain, P.chor * 1.6);
     set(E.padExp.gain, 1 + smile*.25);
-    set(E.windExp.gain, (.12 + wind*.9) * (1 - eyes*.4) * (1 - placeK*.45));
+    set(E.windExp.gain, (.04 + wind*.95) * (1 - eyes*.4) * (1 - placeK*.45));
     set(E.valleyG.gain, (1 - placeK) * (1 - eyes*.4), .3);
     set(E.cityG.gain, placeK * (1 - eyes*.5) * (.55 + tod.bright*.45), .3);
     E.windBands.forEach((bp,i) => set(bp.frequency, (420 + i*180) + wind*1100));
-    set(E.whistleG.gain, (.1 + wind*.45) * (1 - placeK*.6));
+    set(E.whistleG.gain, (.03 + wind*.45) * (1 - placeK*.6));
   };
   return E;
 }
@@ -1010,7 +1029,7 @@ function startSound(){
   }
   A.ac.resume();
   soundOn = true; A.update(cur);
-  intro.hidden = true; soundBtn.hidden = false; soundBtn.textContent = 'Wycisz';
+  intro.hidden = true; $('dock').hidden = false; $('toggle').hidden = false; soundBtn.hidden = false; soundBtn.textContent = 'Wycisz';
 }
 startBtn.addEventListener('click', startSound);
 soundBtn.addEventListener('click', () => {
