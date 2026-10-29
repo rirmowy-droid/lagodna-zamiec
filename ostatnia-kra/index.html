@@ -244,10 +244,13 @@ function makeReverbIR(sec){
 function makeIceIR(){
   if(!iceBuf)return null;
   let best=0;onsetPeaks.forEach((p,i)=>{if(p>onsetPeaks[best])best=i;});
-  const sr=iceBuf.sampleRate,start=Math.floor(onsets[best]*sr),len=Math.min(Math.floor(sr*(LITE?.22:.45)),iceBuf.length-start);
-  const ir=ctx.createBuffer(LITE?1:2,len,sr);
+  // the IR must be at the context's own rate (phones run at 48 kHz, the sample is 44.1 kHz)
+  const ssr=iceBuf.sampleRate,sr=ctx.sampleRate,k=ssr/sr,start=onsets[best]*ssr;
+  const len=Math.min(Math.floor(sr*(LITE?.22:.45)),Math.floor((iceBuf.length-start-2)/k));
+  const ir=ctx.createBuffer(LITE?1:2,Math.max(1,len),sr);
   for(let ch=0;ch<(LITE?1:2);ch++){const src=iceBuf.getChannelData(Math.min(ch,iceBuf.numberOfChannels-1)),d=ir.getChannelData(ch);
-    for(let i=0;i<len;i++){const fi=Math.min(1,i/24);const fo=Math.exp(-i/(sr*.12));d[i]=src[start+i]*fi*fo;}}
+    for(let i=0;i<len;i++){const p=start+i*k,i0=Math.floor(p),f=p-i0;const v=src[i0]*(1-f)+src[i0+1]*f;
+      d[i]=v*Math.min(1,i/24)*Math.exp(-i/(sr*.12));}}
   return ir;
 }
 function noiseBuf(sec){const sr=ctx.sampleRate,b=ctx.createBuffer(2,Math.floor(sr*sec),sr);for(let c=0;c<2;c++){const d=b.getChannelData(c);for(let i=0;i<d.length;i++)d[i]=Math.random()*2-1;}return b;}
@@ -309,7 +312,7 @@ function initAudio(){
   N.leadGain=g();N.leadRev=g();N.leadDly=g();
   N.leadIn.connect(N.leadLP);N.leadLP.connect(N.leadGain);N.leadGain.connect(N.mix);
   N.leadGain.connect(N.leadRev);N.leadRev.connect(N.revSend);N.leadGain.connect(N.leadDly);N.leadDly.connect(N.dlySend);
-  N.structIn=g();N.structConv=ctx.createConvolver();N.structConv.buffer=makeIceIR();N.structOut=g();
+  N.structIn=g();N.structConv=ctx.createConvolver();try{N.structConv.buffer=makeIceIR();}catch(e){diag('splot lodu: '+e.message);}N.structOut=g();
   N.structIn.connect(N.structConv);N.structConv.connect(N.structOut);N.structOut.connect(N.leadIn);
 
   // bass
@@ -488,7 +491,7 @@ function tick(){
 }
 function visAt(t,fn){visQ.push({t,fn});}
 function play(){
-  const first=!N.mix;ensureCtx();if(first)initAudio();if(compat&&(!compatEl||compatEl.paused))setCompat(true);
+  const first=!N.mix;ensureCtx();if(first){try{initAudio();}catch(e){diag('błąd silnika: '+e.message);document.getElementById('audioState').textContent='dźwięk: błąd · zakładka Master';return;}}if(compat&&(!compatEl||compatEl.paused))setCompat(true);
   playing=true;const t=ctx.currentTime+.08;step=0;nextT=t;texT=t;chordIdx=-1;
   N.bassAmp.gain.cancelScheduledValues(t);N.bassAmp.gain.setTargetAtTime(1,t,.4);
   N.windAmp.gain.setTargetAtTime(1,t,1.5);setDelayTime();
@@ -594,7 +597,7 @@ const fileIn=document.getElementById('file');
 document.getElementById('uploadBtn').addEventListener('click',()=>fileIn.click());
 fileIn.addEventListener('change',async()=>{const f=fileIn.files[0];if(!f)return;
   try{const ab=await f.arrayBuffer();const dc=ctx||new OfflineAudioContext(2,1,44100);const buf=await dc.decodeAudioData(ab);
-    iceBuf=buf;analyse(buf);sampleName=f.name.replace(/\.[^.]+$/,'').slice(0,40);if(ctx)N.structConv.buffer=makeIceIR();drawWave();
+    iceBuf=buf;analyse(buf);sampleName=f.name.replace(/\.[^.]+$/,'').slice(0,40);if(ctx&&N.structConv){try{N.structConv.buffer=makeIceIR();}catch(e){diag('splot lodu: '+e.message);}}drawWave();
   }catch(e){document.getElementById('waveName').textContent='Nie udało się odczytać pliku. Spróbuj WAV, MP3 albo FLAC.';}
   fileIn.value='';});
 
@@ -696,7 +699,7 @@ function frame(now){
 document.getElementById('testA').addEventListener('click',beep);
 document.getElementById('testB').addEventListener('click',beepB);
 document.getElementById('compatBtn').addEventListener('click',()=>setCompat(!compat));
-{let v=null;try{v=localStorage.getItem('kra-compat');}catch(e){}if(v==='1'||(v===null&&LITE)){compat=true;const b=document.getElementById('compatBtn');b.textContent='Tryb zgodności: wł.';b.setAttribute('aria-pressed','true');}}
+{let v=null;try{v=localStorage.getItem('kra-compat');}catch(e){}if(v==='1'){compat=true;const b=document.getElementById('compatBtn');b.textContent='Tryb zgodności: wł.';b.setAttribute('aria-pressed','true');}}
 setInterval(()=>{if(ctx)diag();},1000);
 document.getElementById('startBtn').addEventListener('click',()=>{document.getElementById('start').hidden=true;play();});
 document.getElementById('playBtn').addEventListener('click',()=>{document.getElementById('start').hidden=true;playing?stop():play();});
