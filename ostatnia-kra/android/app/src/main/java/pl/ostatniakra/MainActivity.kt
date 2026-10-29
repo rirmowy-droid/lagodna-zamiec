@@ -27,7 +27,7 @@ class MainActivity : AppCompatActivity() {
             .build()
 
         web = WebView(this)
-        web.setBackgroundColor(0xFFF2F6F8.toInt())
+        web.setBackgroundColor(0xFFFFFFFF.toInt())
         web.settings.apply {
             javaScriptEnabled = true
             domStorageEnabled = true

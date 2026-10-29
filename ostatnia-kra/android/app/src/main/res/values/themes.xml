@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="snow">#F2F6F8</color>
+    <color name="snow">#FFFFFF</color>
 
     <style name="Theme.OK" parent="Theme.AppCompat.Light.NoActionBar">
         <item name="android:windowBackground">@color/snow</item>
