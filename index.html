@@ -30,7 +30,6 @@ html,body{height:100%}
 body{background:var(--night);color:var(--ink);font-family:var(--font);overflow:hidden;-webkit-tap-highlight-color:transparent}
 button,select{font:inherit;color:inherit}
 #scene{position:fixed;inset:0;width:100%;height:100%;display:block;touch-action:none;cursor:grab}
-#scene.pixel{image-rendering:pixelated;image-rendering:crisp-edges}
 #scene:active{cursor:grabbing}
 
 .top{position:fixed;top:0;left:0;right:0;padding-top:calc(12px + env(safe-area-inset-top,0px));padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));display:flex;justify-content:space-between;align-items:flex-start;gap:12px;pointer-events:none}
@@ -166,12 +165,6 @@ input[type=range]:disabled{opacity:.85}
           <input type="range" id="sensEyes" min="0" max="100" value="60">
         </div>
         <p class="hint" id="sensHint">Dmuchanie: złóż usta w dziubek albo nadmij policzki. Uśmiech rozjaśnia scenę, zamknięte oczy sprowadzają noc. „Kalibruj” ustawia twoją obecną, neutralną minę jako zero.</p>
-      </div>
-      <div class="seg" id="styleSeg" role="group" aria-label="Styl grafiki">
-        <button class="segb" type="button" data-style="wektor" aria-pressed="true">Wektor</button>
-        <button class="segb" type="button" data-style="akwarela" aria-pressed="false">Akwarela</button>
-        <button class="segb" type="button" data-style="wycinanka" aria-pressed="false">Wycinanka</button>
-        <button class="segb" type="button" data-style="piksel" aria-pressed="false">Piksel</button>
       </div>
       <div class="seg" id="worldSeg" role="group" aria-label="Miejsce">
         <button class="segb" type="button" data-world="dolina" aria-pressed="true">Dolina</button>
@@ -492,9 +485,6 @@ let playMode = (() => { try { return localStorage.getItem('lz-play') || 'speaker
 document.querySelectorAll('#playSeg button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.play === playMode)));
 segGroup('playSeg', 'play', v => { playMode = v; try { localStorage.setItem('lz-play', v); } catch(_){} });
 segGroup('worldSeg', 'world', v => { worldFade.to = v; });
-let STYLE = (() => { try { return localStorage.getItem('lz-style') || 'wektor'; } catch(_){ return 'wektor'; } })();
-document.querySelectorAll('#styleSeg button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.style === STYLE)));
-segGroup('styleSeg', 'style', v => { STYLE = v; try { localStorage.setItem('lz-style', v); } catch(_){} build(); });
 segGroup('todSeg', 'speed', v => todSpeed = +v);
 $('tod').addEventListener('input', () => { todP = $('tod').value/1000; tod = todAt(todP); todSync(); });
 todSync();
@@ -1364,14 +1354,8 @@ function ridgeFn(base, amp){
   return x => base + amp*(.55*Math.sin(x*f[0]+p[0]) + .3*Math.sin(x*f[1]+p[1]) + .15*Math.sin(x*f[2]+p[2]));
 }
 
-function seeded(a){ return () => { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
 function build(){
-  const realRandom = Math.random; Math.random = seeded(20261028);
-  try { buildScene(); } finally { Math.random = realRandom; }
-}
-function buildScene(){
-  DPR = STYLE === 'piksel' ? Math.min(1, 150/innerWidth) : Math.min(window.devicePixelRatio || 1, 1.5);
-  cv.classList.toggle('pixel', STYLE === 'piksel');
+  DPR = Math.min(window.devicePixelRatio || 1, 1.5);
   W = innerWidth; H = innerHeight;
   cv.width = W*DPR; cv.height = H*DPR;
   ctx.setTransform(DPR,0,0,DPR,0,0);
@@ -1406,38 +1390,14 @@ function buildScene(){
   city.critterX = best.x + best.side*best.h*.13 + CR*.4;
 }
 
-function ridgeY(R, x){
-  const y = R.y(x);
-  return STYLE === 'akwarela' ? y + Math.sin(x*.21)*1.6 + Math.sin(x*.057 + 1.3)*2.4 : y;
-}
 function drawRidge(R, ox, colTop){
   ctx.beginPath(); ctx.moveTo(-10, H);
-  for (let sx=-10; sx<=W+10; sx+=(STYLE === 'akwarela' ? 4 : 8)) ctx.lineTo(sx, ridgeY(R, sx-ox));
+  for (let sx=-10; sx<=W+10; sx+=8) ctx.lineTo(sx, R.y(sx-ox));
   ctx.lineTo(W+10, H); ctx.closePath();
-  if (STYLE === 'wycinanka'){
-    ctx.fillStyle = rgba(mix(colTop,[20,28,48],.15));
-    paperShadow(24); ctx.fill(); noShadow();
-    ctx.beginPath();
-    for (let sx=-10; sx<=W+10; sx+=8){ const y = R.y(sx-ox) + .8; sx === -10 ? ctx.moveTo(sx, y) : ctx.lineTo(sx, y); }
-    ctx.lineWidth = 1.2; ctx.strokeStyle = 'rgba(255,255,255,.22)'; ctx.stroke();
-    return;
-  }
-  if (STYLE === 'akwarela'){
-    const g = ctx.createLinearGradient(0, R.y(-ox) - H*.06, 0, H);
-    g.addColorStop(0, rgba(mix(colTop,[255,255,255],.06))); g.addColorStop(.35, rgba(colTop)); g.addColorStop(1, rgba(mix(colTop,[20,28,48],.35)));
-    ctx.fillStyle = g; ctx.fill();
-    // pigment pools along the wet edge
-    ctx.beginPath();
-    for (let sx=-10; sx<=W+10; sx+=4){ const y = ridgeY(R, sx-ox) + 1.2; sx === -10 ? ctx.moveTo(sx, y) : ctx.lineTo(sx, y); }
-    ctx.lineWidth = 2.6; ctx.strokeStyle = rgba(mix(colTop,[16,22,44],.55), .55); ctx.stroke();
-    return;
-  }
   const g = ctx.createLinearGradient(0, R.y(-ox) - H*.06, 0, H);
   g.addColorStop(0, rgba(colTop)); g.addColorStop(1, rgba(mix(colTop,[20,28,48],.55)));
   ctx.fillStyle = g; ctx.fill();
 }
-function paperShadow(b){ ctx.shadowColor = 'rgba(4,7,16,.7)'; ctx.shadowBlur = b; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = -4; }
-function noShadow(){ ctx.shadowColor = 'rgba(0,0,0,0)'; ctx.shadowBlur = 0; ctx.shadowOffsetY = 0; }
 function drawTrees(list, R, ox, col, t, windAmt){
   ctx.fillStyle = rgba(col); ctx.beginPath();
   for (const tr of list){
@@ -1450,7 +1410,7 @@ function drawTrees(list, R, ox, col, t, windAmt){
     }
     ctx.rect(x - h*.025, y - h*.13, h*.05, h*.13);
   }
-  if (STYLE === 'wycinanka'){ paperShadow(8); ctx.fill(); noShadow(); } else ctx.fill();
+  ctx.fill();
 }
 function drawFog(layer, ox, alphaMul){
   for (const f of fog){
@@ -1587,15 +1547,10 @@ function drawGround(fn, dox){
   ctx.beginPath(); ctx.moveTo(-10, H);
   for (let sx=-10; sx<=W+10; sx+=6) ctx.lineTo(sx, fn(sx - dox));
   ctx.lineTo(W+10, H); ctx.closePath();
-  if (STYLE === 'wycinanka'){
-    ctx.fillStyle = rgba(mix(mix([226,234,248],[255,226,200], smile*.4), [70,80,110], eyes*.6));
-    paperShadow(26); ctx.fill(); noShadow();
-  } else {
-    const dg = ctx.createLinearGradient(0, H*.82, 0, H);
-    dg.addColorStop(0, rgba(mix(mix([232,240,252],[255,226,200], smile*.4), [70,80,110], eyes*.6)));
-    dg.addColorStop(1, rgba(mix([150,168,204],[40,48,74], eyes*.6)));
-    ctx.fillStyle = dg; ctx.fill();
-  }
+  const dg = ctx.createLinearGradient(0, H*.82, 0, H);
+  dg.addColorStop(0, rgba(mix(mix([232,240,252],[255,226,200], smile*.4), [70,80,110], eyes*.6)));
+  dg.addColorStop(1, rgba(mix([150,168,204],[40,48,74], eyes*.6)));
+  ctx.fillStyle = dg; ctx.fill();
   ctx.lineWidth = 1.5; ctx.strokeStyle = `rgba(255,255,255,${.35*(1-eyes*.7)})`; ctx.stroke();
 }
 
@@ -1714,63 +1669,6 @@ function drawCritter(gfn, dox, dt){
 }
 
 let todUiAcc = 0;
-
-/* ---------- Art styles: textures and pixel quantisation ---------- */
-const softCv = document.createElement('canvas'), softCtx = softCv.getContext('2d');
-const TEX = (() => {
-  let paper = null, wash = null;
-  const mk = (size, draw) => { const c = document.createElement('canvas'); c.width = c.height = size; draw(c.getContext('2d'), size); return c; };
-  return {
-    paper(){
-      if (!paper) paper = mainCtx.createPattern(mk(256, (g, n) => {
-        const img = g.createImageData(n, n), d = img.data;
-        for (let i=0; i<d.length; i+=4){ const v = 225 + Math.random()*30; d[i] = v; d[i+1] = v; d[i+2] = v - 4; d[i+3] = 255; }
-        g.putImageData(img, 0, 0);
-        g.globalAlpha = .08; g.strokeStyle = '#8a8a96';                      // paper fibres
-        for (let k=0; k<140; k++){ const x = Math.random()*n, y = Math.random()*n, a = Math.random()*6.28, l = 4 + Math.random()*14;
-          g.beginPath(); g.moveTo(x, y); g.lineTo(x + Math.cos(a)*l, y + Math.sin(a)*l); g.stroke(); }
-      }), 'repeat');
-      return paper;
-    },
-    wash(){
-      if (!wash) wash = mainCtx.createPattern(mk(512, (g, n) => {
-        g.fillStyle = '#fff'; g.fillRect(0, 0, n, n);
-        for (let k=0; k<70; k++){                                            // pigment blooms, wrapped so the tile repeats
-          const x = Math.random()*n, y = Math.random()*n, r = 30 + Math.random()*120, v = 200 + Math.random()*45;
-          for (const [dx, dy] of [[0,0],[n,0],[-n,0],[0,n],[0,-n]]){
-            const gr = g.createRadialGradient(x+dx, y+dy, r*.2, x+dx, y+dy, r);
-            gr.addColorStop(0, `rgba(${v},${v},${v+6},.35)`); gr.addColorStop(.85, `rgba(${v-25},${v-25},${v-15},.25)`); gr.addColorStop(1, 'rgba(255,255,255,0)');
-            g.fillStyle = gr; g.fillRect(x+dx-r, y+dy-r, r*2, r*2);
-          }
-        }
-      }), 'repeat');
-      return wash;
-    },
-  };
-})();
-const BAYER = [0,8,2,10,12,4,14,6,3,11,1,9,15,7,13,5];
-const PAL = ['05080f','0b1424','121d36','1c2a4a','26385e','33476f','46598a','5b6f9e','7487b3','93a5cb','b6c4e0','dbe4f3','f4f7fc',
-  '3a2a4a','6a4a6e','a8667a','c47a9a','e0907a','f5c08a','ffe2b0','ff9a5a','5a4636','8a6a4e','b88a5a','dcb070','2e6e6a','5fbfa0','8fe0c4'].map(h => [0,2,4].map(i => parseInt(h.slice(i,i+2),16)));
-const LUT = new Uint8Array(32768).fill(255);
-function nearestPal(key){
-  const r = (key >> 10)*8 + 4, g = ((key >> 5) & 31)*8 + 4, b = (key & 31)*8 + 4;
-  let best = 0, bd = 1e9;
-  for (let i=0; i<PAL.length; i++){ const p = PAL[i], dr = r - p[0], dg = g - p[1], db = b - p[2], dd = dr*dr*.3 + dg*dg*.59 + db*db*.11; if (dd < bd){ bd = dd; best = i; } }
-  return LUT[key] = best;
-}
-function pixelize(){
-  const w = cv.width, h = cv.height, img = mainCtx.getImageData(0, 0, w, h), d = img.data;
-  for (let y=0; y<h; y++){
-    for (let x=0; x<w; x++){
-      const i = (y*w + x)*4, t = (BAYER[(y & 3)*4 + (x & 3)]/16 - .5)*18;
-      const r = clamp(d[i] + t, 0, 255) >> 3, g = clamp(d[i+1] + t, 0, 255) >> 3, b = clamp(d[i+2] + t, 0, 255) >> 3;
-      const key = (r << 10) | (g << 5) | b;
-      const p = PAL[LUT[key] === 255 ? nearestPal(key) : LUT[key]];
-      d[i] = p[0]; d[i+1] = p[1]; d[i+2] = p[2];
-    }
-  }
-  mainCtx.putImageData(img, 0, 0);
-}
 let last = performance.now(), T = 0, raf = 0, spawnAcc = 0, audioAcc = 0;
 function frame(now){
   let dt = Math.min(.05, (now - last)/1000); last = now;
@@ -1849,7 +1747,7 @@ function frame(now){
   ctx.globalCompositeOperation = 'source-over';
 
   ctx = landCtx; ctx.clearRect(0,0,W,H);
-  const fogMul = (1 + eyes*1.4 - smile*.25) * (STYLE === 'wycinanka' ? .45 : 1);
+  const fogMul = 1 + eyes*1.4 - smile*.25;
   const dox = ox(drift);
   let gfn;
   if (world === 'miasto'){
@@ -1861,9 +1759,7 @@ function frame(now){
     ctx.globalAlpha = clamp(.25 + lit, 0, 1); ctx.drawImage(city.far.lit, fx - city.X0, 0, city.ow, H); ctx.globalAlpha = 1;
     drawFog('back', fx, fogMul);
     drawFlakes(flakes[0], ox(flakes[0]));
-    if (STYLE === 'wycinanka') paperShadow(14);
     ctx.drawImage(city.mid.canvas, mx - city.X0, 0, city.ow, H);
-    noShadow();
     drawWindows(city.mid.wins, mx, lit);
     drawFog('mid', mx, fogMul);
     drawFlakes(flakes[1], ox(flakes[1]));
@@ -1943,12 +1839,6 @@ function frame(now){
   }
   ctx = mainCtx;
   ctx.drawImage(landCv, 0, 0, W, H);
-  if (STYLE === 'akwarela'){
-    const sw = Math.max(1, Math.round(W/7)), sh = Math.max(1, Math.round(H/7));
-    if (softCv.width !== sw || softCv.height !== sh){ softCv.width = sw; softCv.height = sh; }
-    softCtx.clearRect(0, 0, sw, sh); softCtx.drawImage(landCv, 0, 0, sw, sh);
-    ctx.globalAlpha = .7; ctx.imageSmoothingEnabled = true; ctx.drawImage(softCv, 0, 0, W, H); ctx.globalAlpha = 1;
-  }
 
   for (const L of flakes){
     for (const p of L.list){
@@ -1964,12 +1854,6 @@ function frame(now){
     if (f.x - f.w/2 > W + M) f.x = -f.w/2 - M;
   }
 
-  if (STYLE === 'akwarela' || STYLE === 'wycinanka'){
-    ctx.globalCompositeOperation = 'multiply';
-    if (STYLE === 'akwarela'){ ctx.globalAlpha = .95; ctx.fillStyle = TEX.wash(); ctx.fillRect(0,0,W,H); }
-    ctx.globalAlpha = STYLE === 'akwarela' ? .7 : .45; ctx.fillStyle = TEX.paper(); ctx.fillRect(0,0,W,H);
-    ctx.globalAlpha = 1; ctx.globalCompositeOperation = 'source-over';
-  }
   if (eyes > .01){ ctx.fillStyle = `rgba(4,7,18,${eyes*.5})`; ctx.fillRect(0,0,W,H); }
   const vg = ctx.createRadialGradient(W/2, H*.55, Math.min(W,H)*.35, W/2, H*.55, Math.max(W,H)*.8);
   vg.addColorStop(0,'rgba(0,0,0,0)'); vg.addColorStop(1, `rgba(3,6,14,${.35 + eyes*.3})`);
@@ -1978,7 +1862,6 @@ function frame(now){
   if (worldFade.to){ worldFade.t = Math.min(1, worldFade.t + dt*2.5); if (worldFade.t >= 1){ world = worldFade.to; worldFade.to = null; } }
   else if (worldFade.t > 0) worldFade.t = Math.max(0, worldFade.t - dt*2.5);
   if (worldFade.t > 0){ ctx.fillStyle = `rgba(6,10,20,${worldFade.t})`; ctx.fillRect(0,0,W,H); }
-  if (STYLE === 'piksel') pixelize();
 
   raf = requestAnimationFrame(frame);
 }
