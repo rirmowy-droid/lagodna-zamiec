@@ -34,6 +34,7 @@ button,select{font:inherit;color:inherit}
 .veil{position:fixed;inset:0;pointer-events:none}
 #vignette{background:radial-gradient(ellipse 85% 75% at 50% 55%, rgba(3,6,14,0) 50%, rgba(3,6,14,1) 100%);opacity:.35}
 #nightVeil{background:#040712;opacity:0}
+#gradeVeil{mix-blend-mode:soft-light;opacity:0;background:#808080}
 #fadeVeil{background:#060a14;opacity:0}
 
 .top{position:fixed;top:0;left:0;right:0;padding-top:calc(12px + env(safe-area-inset-top,0px));padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));display:flex;justify-content:space-between;align-items:flex-start;gap:12px;pointer-events:none}
@@ -110,6 +111,7 @@ input[type=range]:disabled{opacity:.85}
 </style>
 
 <canvas id="scene" aria-label="Zimowy pejzaż w trzech planach: dolina, miasto, zamarznięte jezioro, las albo morze"></canvas>
+<div class="veil" id="gradeVeil"></div>
 <div class="veil" id="vignette"></div>
 <div class="veil" id="nightVeil"></div>
 <div class="veil" id="fadeVeil"></div>
@@ -1519,10 +1521,10 @@ function drawFog(layer, ox, alphaMul){
 }
 function drawFlakes(L, ox){
   ctx.fillStyle = `rgba(238,244,252,${L.a})`; ctx.beginPath();
-  const span = W + 20;
-  for (const p of L.list){
-    const x = ((p.x + ox) % span + span) % span - 10;
-    ctx.moveTo(x + p.r, p.y); ctx.arc(x, p.y, p.r, 0, 6.2832);
+  const span = W + 20, n = Math.floor(L.list.length*LK.snowN), sz = LK.snowS;
+  for (let i=0; i<n; i++){
+    const p = L.list[i], x = ((p.x + ox) % span + span) % span - 10, r = p.r*sz;
+    ctx.moveTo(x + r, p.y); ctx.arc(x, p.y, r, 0, 6.2832);
   }
   ctx.fill();
 }
@@ -1670,14 +1672,16 @@ function drawLamps(dox){
     ctx.fillStyle = rgba(snowRGB(), .92); ctx.beginPath(); ctx.ellipse(hx, hy - 3, 9.5, 2.8, 0, Math.PI, 0); ctx.fill();
   }
 }
-function drawGround(fn, dox){
+function drawGround(fn, dox, shade){
   const {smile, eyes} = cur;
   ctx.beginPath(); ctx.moveTo(-10, H);
   for (let sx=-10; sx<=W+10; sx+=6) ctx.lineTo(sx, fn(sx - dox));
   ctx.lineTo(W+10, H); ctx.closePath();
+  let c0 = mix(mix([232,240,252],[255,226,200], smile*.4), [70,80,110], eyes*.6), c1 = mix([150,168,204],[40,48,74], eyes*.6);
+  if (shade){ c0 = mix(c0, shade[0], shade[1]); c1 = mix(c1, shade[0], shade[1]); }
   const dg = ctx.createLinearGradient(0, H*.82, 0, H);
-  dg.addColorStop(0, rgba(mix(mix([232,240,252],[255,226,200], smile*.4), [70,80,110], eyes*.6)));
-  dg.addColorStop(1, rgba(mix([150,168,204],[40,48,74], eyes*.6)));
+  dg.addColorStop(0, rgba(c0));
+  dg.addColorStop(1, rgba(c1));
   ctx.fillStyle = dg; ctx.fill();
   ctx.lineWidth = 1.5; ctx.strokeStyle = `rgba(255,255,255,${.35*(1-eyes*.7)})`; ctx.stroke();
 }
@@ -1801,6 +1805,23 @@ const GREEN = blob([110,255,160]);
 const PLACES = ['dolina','miasto','jezioro','las','morze'];
 const PW = {dolina:1, miasto:0, jezioro:0, las:0, morze:0};
 const WINDMUL = {dolina:1, miasto:.55, jezioro:.9, las:.6, morze:1.15};
+const LOOK = {
+  dolina:  {k:0,   top:[10,17,34], mid:[28,42,72],  hor:[66,86,124],   aur:1,  aurCol:[110,230,190], stars:1,   moon:1,   moonLow:0, snowN:1,   snowW:0,   snowV:1,    snowS:1,    grade:[128,128,128], gradeA:0,   fog:1},
+  miasto:  {k:.6,  top:[24,16,36], mid:[70,44,74],  hor:[196,112,78],  aur:0,  aurCol:[110,230,190], stars:.25, moon:.8,  moonLow:0, snowN:.55, snowW:.06, snowV:1.6,  snowS:.75,  grade:[255,150,80],  gradeA:.24, fog:.8},
+  jezioro: {k:.55, top:[38,34,76], mid:[118,92,150], hor:[238,172,192], aur:.8, aurCol:[210,140,255], stars:1,   moon:1.6, moonLow:1, snowN:.4,  snowW:0,   snowV:.65,  snowS:1.1,  grade:[205,165,255], gradeA:.2,  fog:1.5},
+  las:     {k:.6,  top:[6,16,22],  mid:[14,38,42],  hor:[34,66,66],    aur:.3, aurCol:[110,230,190], stars:.5,  moon:.9,  moonLow:0, snowN:.65, snowW:0,   snowV:.55,  snowS:1.35, grade:[40,170,140],  gradeA:.24, fog:1.3},
+  morze:   {k:.55, top:[18,28,42], mid:[54,70,90],  hor:[124,142,160], aur:.5, aurCol:[120,220,230], stars:.7,  moon:1.1, moonLow:0, snowN:1,   snowW:.5,  snowV:1.25, snowS:.9,   grade:[130,180,205], gradeA:.2,  fog:.7},
+};
+function blendLook(){
+  const o = {};
+  for (const k of Object.keys(LOOK.dolina)){
+    if (Array.isArray(LOOK.dolina[k])){ o[k] = [0,0,0]; for (const p of PLACES) for (let i=0; i<3; i++) o[k][i] += LOOK[p][k][i]*PW[p]; }
+    else { o[k] = 0; for (const p of PLACES) o[k] += LOOK[p][k]*PW[p]; }
+  }
+  return o;
+}
+let LK = blendLook();
+const CLOUD = blob([28,36,54]);
 let lake, forest, sea, prints = [], critterAt = {};
 const fox = {state:'away', timer:10, x:0, dir:1, t:0, step:0, stop:0};
 const owl = {blink:0, blinkT:3, hoot:0};
@@ -1808,8 +1829,8 @@ const smoke = {};
 const auroraCv = document.createElement('canvas'), auroraCtx = auroraCv.getContext('2d');
 
 function moonPos(so){
-  const q = clamp((tod.p - .1)/.62, 0, 1);
-  return {x: lerp(W*.12, W*.88, q) + so*1.5, y: H*(.34 - .22*Math.sin(q*Math.PI)), r: Math.min(W,H)*.032};
+  const q = clamp((tod.p - .1)/.62, 0, 1), sq = Math.sin(q*Math.PI);
+  return {x: lerp(W*.12, W*.88, q) + so*1.5, y: lerp(H*(.34 - .22*sq), H*(.44 - .1*sq), LK.moonLow), r: Math.min(W,H)*.032*LK.moon};
 }
 function wavePhase(){ return A && A.waveT0 !== undefined ? ((A.ac.currentTime - A.waveT0)/8) % 1 : (T/8) % 1; }
 function snowRGB(){ const {smile, eyes} = cur; return mix(mix([232,240,252],[255,226,200], smile*.4), [70,80,110], eyes*.6); }
@@ -2026,7 +2047,7 @@ function buildLake(){
   lake = {
     far: {y: ridgeFn(H*.5, H*.07), par:.1, col:[112,130,172]},
     shore: {y: ridgeFn(H*.6, H*.01), par:.22, col:[66,82,120]},
-    wl: H*.618, near: ridgeFn(H*.865, H*.025),
+    wl: H*.618, near: ridgeFn(H*.865, H*.025), iceY: H*.862,
     reeds: [], cracks: [], patches: [], cabinX: W*.72, cs: s*.06,
   };
   lake.trees = Array.from({length: Math.round(W/11)}, () => ({x: rnd(-M*1.4, W + M*1.4), h: rnd(s*.022, s*.046), ph: rnd(0,6.28)}))
@@ -2037,7 +2058,24 @@ function buildLake(){
     lake.cracks.push(pts);
   }
   for (let i=0; i<11; i++) lake.patches.push({x: rnd(-W*.2, W*1.2), y: rnd(lake.wl + H*.02, H*.84), w: rnd(30,120), h: rnd(3,9)});
-  for (const cx of [W*.06, W*.2, W*.8, W*.95]) for (let k=0; k<8; k++) lake.reeds.push({x: cx + rnd(-20,20), h: rnd(H*.04, H*.085), ph: rnd(0,6.28), lean: rnd(-.15,.15)});
+  for (const cx of [W*.04, W*.14, W*.86, W*.97]) for (let k=0; k<8; k++) lake.reeds.push({x: cx + rnd(-16,16), h: rnd(H*.04, H*.085), ph: rnd(0,6.28), lean: rnd(-.15,.15)});
+  lake.bankL = [[-W*.4, H*.78], [W*.02, H*.79], [W*.12, H*.81], [W*.22, H*.86], [W*.3, H*1.02]];
+  lake.bankR = [[W*.68, H*1.02], [W*.77, H*.865], [W*.87, H*.81], [W*.97, H*.79], [W*1.4, H*.775]];
+  const along = (pts, x) => { for (let i=0; i<pts.length-1; i++){ const [x0,y0] = pts[i], [x1,y1] = pts[i+1]; if (x >= x0 && x <= x1) return lerp(y0, y1, (x - x0)/(x1 - x0)); } return null; };
+  lake.bankY = x => along(lake.bankL, x) ?? along(lake.bankR, x) ?? lake.iceY;
+  lake.ice = x => lake.iceY + Math.sin(x*.012)*1.2;
+}
+function drawBanks(dox){
+  const {smile, eyes} = cur;
+  const c0 = mix(mix([232,240,252],[255,226,200], smile*.4), [70,80,110], eyes*.6), c1 = mix([150,168,204],[40,48,74], eyes*.6);
+  for (const pts of [lake.bankL, lake.bankR]){
+    ctx.beginPath(); ctx.moveTo(pts[0][0] + dox, H + 10);
+    for (const [x,y] of pts) ctx.lineTo(x + dox, y);
+    ctx.lineTo(pts[pts.length-1][0] + dox, H + 10); ctx.closePath();
+    const g = ctx.createLinearGradient(0, H*.78, 0, H); g.addColorStop(0, rgba(c0)); g.addColorStop(1, rgba(c1));
+    ctx.fillStyle = g; ctx.fill();
+    ctx.lineWidth = 1.5; ctx.strokeStyle = `rgba(255,255,255,${.35*(1 - eyes*.7)})`; ctx.stroke();
+  }
 }
 function drawBand(R, o, col, bottom){
   ctx.beginPath(); ctx.moveTo(-10, bottom);
@@ -2100,10 +2138,18 @@ function drawLake(dt, fogMul, dox, sk){
   drawCabin(cxs, cys, lake.cs, 'lake', so, dt);
   drawFog('mid', io, fogMul*.8);
   drawFlakes(flakes[1], ox(flakes[1]));
-  drawGround(lake.near, dox);
-  drawReeds(lake.reeds, lake.near, dox);
-  drawCritter(lake.near, dox, dt);
-  return lake.near;
+  // low mist lying on the ice
+  ctx.globalAlpha = .45*Math.min(1, fogMul); ctx.drawImage(FOG, -W*.2 + io*.5, wl - H*.04, W*1.4, H*.1); ctx.globalAlpha = 1;
+  // fishing hole next to the critter
+  const hx = W*.63 + dox, hy = lake.iceY + CR*.25;
+  ctx.fillStyle = rgba(snowRGB(), .8); ctx.beginPath(); ctx.ellipse(hx, hy, CR*.62, CR*.2, 0, 0, 6.2832); ctx.fill();
+  ctx.fillStyle = 'rgb(12,20,36)'; ctx.beginPath(); ctx.ellipse(hx, hy + 1, CR*.48, CR*.13, 0, 0, 6.2832); ctx.fill();
+  ctx.globalCompositeOperation = 'lighter'; ctx.globalAlpha = .25 + .15*Math.sin(T*1.7);
+  ctx.drawImage(GLINT, hx - CR*.25, hy - CR*.04, CR*.5, CR*.12); ctx.globalAlpha = 1; ctx.globalCompositeOperation = 'source-over';
+  drawBanks(dox);
+  drawReeds(lake.reeds, lake.bankY, dox);
+  drawCritter(lake.ice, dox, dt);
+  return lake.ice;
 }
 
 /* ---- deep forest ---- */
@@ -2120,6 +2166,8 @@ function buildForest(){
     beams: [{x: W*.18, w: W*.07}, {x: W*.46, w: W*.12}, {x: W*.74, w: W*.06}],
     motes: Array.from({length: 22}, () => ({x: rnd(0, W), y: rnd(H*.35, H*.85), ph: rnd(0,6.28), sp: rnd(.2,.6)})),
     falls: [], owlY: H*.42,
+    saplings: mk(10, s*.035, s*.07).filter(t => Math.abs(t.x - W*.56) > W*.13),
+    sprigs: Array.from({length: 14}, () => ({x: rnd(-W*.15, W*1.15), len: rnd(H*.04, H*.13), w: rnd(8,24)})),
   };
 }
 function drawOwl(x, y, s, dt){
@@ -2185,7 +2233,8 @@ function drawForest(dt, fogMul, dox){
   ctx.fill();
   drawFog('mid', ox(f.mid), fogMul);
   drawFlakes(flakes[1], ox(flakes[1]));
-  drawGround(f.near, dox);
+  drawGround(f.near, dox, [[38,66,74], .35]);
+  drawTrees(f.saplings, {y: f.near}, dox, [24,40,50], T, wind*.4);
   ctx.globalCompositeOperation = 'lighter';
   const mk = (.4 + smile*.6)*(1 - tod.bright*.6)*(1 - eyes*.5);
   for (const m of f.motes){
@@ -2224,22 +2273,47 @@ function drawForest(dt, fogMul, dox){
       drawOwl(tx - bl*.5, by - bh*.5, CR*1.15, dt);
     }
   }
+  // the canopy closes overhead; the sky shows only through gaps
+  const co = cam*M*1.1, sway = Math.sin(T*.6)*2*(1 + wind*3);
+  const edge = x => H*(.1 + .045*Math.sin(x*.013 + 1) + .025*Math.sin(x*.041 + 2)) + Math.sin(x*.19)*3;
+  ctx.fillStyle = 'rgb(10,18,24)'; ctx.beginPath(); ctx.moveTo(-20, -5);
+  for (let sx=-20; sx<=W+20; sx+=6) ctx.lineTo(sx, edge(sx - co) + sway*.5);
+  ctx.lineTo(W+20, -5); ctx.closePath(); ctx.fill();
+  ctx.beginPath();
+  for (const sp of f.sprigs){
+    const x = sp.x + co, y0 = edge(sp.x) - 2, sw = sway + Math.sin(T*.9 + sp.x)*1.5;
+    ctx.moveTo(x - sp.w*.5, y0); ctx.lineTo(x + sw, y0 + sp.len); ctx.lineTo(x + sp.w*.5, y0);
+    ctx.moveTo(x - sp.w*.8, y0 + sp.len*.35); ctx.lineTo(x + sw*.7, y0 + sp.len*.75); ctx.lineTo(x + sp.w*.8, y0 + sp.len*.35);
+  }
+  ctx.fill();
+  ctx.strokeStyle = rgba(snowRGB(), .18); ctx.lineWidth = 1.2; ctx.beginPath();
+  for (let sx=-20; sx<=W+20; sx+=6){ const y = edge(sx - co) + sway*.5 - 1; sx === -20 ? ctx.moveTo(sx, y) : ctx.lineTo(sx, y); }
+  ctx.stroke();
   return f.near;
 }
 
 /* ---- winter sea and the pier ---- */
 function buildSea(){
-  const hz = H*.6;
+  const hz = H*.665;
   sea = {
     hz, beach: ridgeFn(H*.875, H*.018),
     floes: Array.from({length: 10}, () => { const y = rnd(hz + H*.03, H*.79), k = (y - hz)/(H*.12); return {x: rnd(-W*.3, W*1.3), y, w: rnd(12,30)*k, ph: rnd(0,6.28), sp: rnd(-4,4)}; }),
     grass: Array.from({length: 26}, (_, i) => ({x: (i < 13 ? rnd(-W*.1, W*.3) : rnd(W*.75, W*1.1)), h: rnd(10,22), lean: rnd(-.3,.3), ph: rnd(0,6.28)})),
     gulls: [],
+    clouds: Array.from({length: 8}, () => ({x: rnd(-W*.4, W*1.4), y: rnd(H*.06, H*.42), w: rnd(W*.45, W*1), h: rnd(H*.05, H*.1), sp: rnd(4,10)})),
+    sand: Array.from({length: 7}, () => ({x: rnd(-W*.1, W*1.1), w: rnd(14,40), h: rnd(2,5), o: rnd(6, 40)})),
     pier: {xn: W*.12, yn: H*.98, xf: W*.42, yf: hz + H*.035, wn: W*.1, wf: W*.012},
   };
 }
 function drawSea(dt, fogMul, dox, sk){
   const {wind, eyes} = cur, ox = R => cam*M*R.par, hz = sea.hz, o1 = cam*M*.1, o2 = cam*M*.5;
+  // low clouds rolling in from the sea
+  for (const c of sea.clouds){
+    c.x += (c.sp + wind*30)*dt; if (c.x - c.w > W*1.4) c.x = -W*.4 - c.w;
+    ctx.globalAlpha = (.45 + .25*tod.night)*(1 - eyes*.3);
+    ctx.drawImage(tod.bright > .55 ? FOG : CLOUD, c.x + cam*M*.05 - c.w, c.y - c.h, c.w*2, c.h*2);
+  }
+  ctx.globalAlpha = 1;
   // water reflecting the sky
   const g = ctx.createLinearGradient(0, hz, 0, H);
   g.addColorStop(0, rgba(mix(sk.hor,[60,80,120],.4))); g.addColorStop(.25, rgba(mix(sk.midc,[24,36,62],.5))); g.addColorStop(1, rgba(mix(sk.top,[10,16,30],.4)));
@@ -2248,7 +2322,7 @@ function drawSea(dt, fogMul, dox, sk){
   const path = (x, col, a) => {
     ctx.globalAlpha = a;
     for (let k=0; k<11; k++){
-      const q = k/10, y = hz + Math.pow(q, 1.5)*H*.27, w = Math.min(W,H)*.03*(1 + k*.8), sh = Math.sin(T*1.3 + k*1.7)*w*.4;
+      const q = k/10, y = hz + Math.pow(q, 1.5)*(H*.86 - hz), w = Math.min(W,H)*.03*(1 + k*.8), sh = Math.sin(T*1.3 + k*1.7)*w*.4;
       ctx.drawImage(col, x - w + sh, y - 2, w*2, 3 + k*.7);
     }
   };
@@ -2257,7 +2331,7 @@ function drawSea(dt, fogMul, dox, sk){
   ctx.globalAlpha = 1; ctx.globalCompositeOperation = 'source-over';
   ctx.strokeStyle = 'rgba(200,215,240,.13)'; ctx.lineWidth = 1;
   for (let j=1; j<12; j++){
-    const q = j/12, y = hz + q*q*H*.27; ctx.beginPath();
+    const q = j/12, y = hz + q*q*(H*.86 - hz); ctx.beginPath();
     for (let x=-10; x<=W+10; x+=12){ const yy = y + Math.sin(x*(.04/(q + .2)) + T*(.6 + q*(1 + wind)) + j)*(.5 + q*3*(1 + wind)); x === -10 ? ctx.moveTo(x, yy) : ctx.lineTo(x, yy); }
     ctx.stroke();
   }
@@ -2328,6 +2402,17 @@ function drawSea(dt, fogMul, dox, sk){
   ctx.globalAlpha = 1; ctx.globalCompositeOperation = 'source-over';
   // beach, dune grass, gulls by day
   drawGround(sea.beach, dox);
+  ctx.fillStyle = 'rgba(118,98,90,.35)'; ctx.beginPath();
+  for (const sd of sea.sand){ const x = sd.x + dox, y = sea.beach(sd.x) + sd.o; ctx.moveTo(x + sd.w, y); ctx.ellipse(x, y, sd.w, sd.h, 0, 0, 6.2832); }
+  ctx.fill();
+  { // driftwood
+    const x = W*.3 + dox, y = sea.beach(W*.3) + 10, L = Math.min(W,H)*.16;
+    ctx.save(); ctx.translate(x, y); ctx.rotate(-.06);
+    ctx.fillStyle = 'rgb(84,72,72)'; ctx.beginPath(); ctx.ellipse(0, 0, L/2, L*.06, 0, 0, 6.2832); ctx.fill();
+    ctx.fillRect(L*.18, -L*.16, L*.03, L*.12); ctx.fillRect(-L*.3, -L*.11, L*.025, L*.08);
+    ctx.fillStyle = rgba(snowRGB(), .85); ctx.beginPath(); ctx.ellipse(-L*.05, -L*.045, L*.4, L*.03, 0, Math.PI, 0); ctx.fill();
+    ctx.restore();
+  }
   ctx.strokeStyle = 'rgb(70,66,74)'; ctx.lineWidth = 1.3; ctx.beginPath();
   for (const gr of sea.grass){
     const bx = gr.x + dox; if (bx < -20 || bx > W + 20) continue;
@@ -2358,12 +2443,12 @@ function buildPlaces(){
   prints = [];
   const end = W*.66 - CR*1.5; let i = 0;
   for (let x = W*.04; x < end; x += 15*(CR/30), i++) prints.push({x: x + rnd(-1.5,1.5), o: (i % 2 ? 2.6 : -2.6) + Math.sin(x*.05)*2});
-  critterAt = {dolina: W*.66, miasto: city.critterX, jezioro: W*.36, las: W*.56, morze: W*.68};
+  critterAt = {dolina: W*.66, miasto: city.critterX, jezioro: W*.47, las: W*.56, morze: W*.68};
 }
 
 let todUiAcc = 0;
 let last = performance.now(), T = 0, raf = 0, spawnAcc = 0, audioAcc = 0, workAvg = 12, slowT = 0;
-const veil = {v:-1, n:-1, f:-1};
+const veil = {v:-1, n:-1, f:-1, g:-1, gc:''};
 function setVeil(id, key, v){ if (Math.abs(veil[key] - v) > .004){ veil[key] = v; $(id).style.opacity = v.toFixed(3); } }
 function frame(now){
   if (now - last < 30){ raf = requestAnimationFrame(frame); return; }
@@ -2378,6 +2463,7 @@ function frame(now){
 
   for (const k of PLACES) PW[k] += ((world === k ? 1 : 0) - PW[k]) * Math.min(1, dt*.8);
   placeK = PW.miasto;
+  LK = blendLook();
   sensorsTick(dt);
   if (todSpeed > 0) todP = (todP + dt/todSpeed) % 1;
   tod = todAt(todP);
@@ -2386,24 +2472,25 @@ function frame(now){
   if (A && audioAcc > .05){ audioAcc = 0; A.update(cur); }
   drainQueue();
 
-  const top = mix(tod.top,[4,7,16], eyes);
-  const midc = mix(mix(tod.mid,[52,40,70], smile*.5), [10,14,28], eyes*.7);
+  const gk = LK.k*(.5 + .5*tod.night);
+  const top = mix(mix(tod.top, LK.top, gk),[4,7,16], eyes);
+  const midc = mix(mix(mix(tod.mid, LK.mid, gk),[52,40,70], smile*.5), [10,14,28], eyes*.7);
   const ck = world === 'miasto' ? 1 : 0;
-  const hor = mix(mix(mix(tod.hor,[124,96,108], ck*.6*tod.night),[214,150,128], smile*.5), [22,26,44], eyes*.7);
+  const hor = mix(mix(mix(mix(tod.hor, LK.hor, gk),[124,96,108], ck*.3*tod.night),[214,150,128], smile*.5), [22,26,44], eyes*.7);
   const sky = ctx.createLinearGradient(0,0,0,H*.62);
   sky.addColorStop(0, rgba(top)); sky.addColorStop(.6, rgba(midc)); sky.addColorStop(1, rgba(hor));
   ctx.fillStyle = sky; ctx.fillRect(0,0,W,H);
 
   const so = cam * M * .04;
   for (const s of stars){
-    const a = (.35 + .65*(.5+.5*Math.sin(T*s.sp + s.ph))) * (1 - eyes*.85) * (1 - smile*.35) * (1 - ck*.6) * tod.stars;
+    const a = (.35 + .65*(.5+.5*Math.sin(T*s.sp + s.ph))) * (1 - eyes*.85) * (1 - smile*.35) * LK.stars * tod.stars;
     ctx.fillStyle = `rgba(230,238,255,${a})`;
     ctx.fillRect(s.x + so, s.y, s.r, s.r);
   }
 
   // Moon crossing the night sky
   if (tod.moon > .01){
-    const q = clamp((tod.p - .1)/.62, 0, 1), mx = lerp(W*.12, W*.88, q) + so*1.5, my = H*(.34 - .22*Math.sin(q*Math.PI)), mr = Math.min(W,H)*.032;
+    const mp = moonPos(so), mx = mp.x, my = mp.y, mr = mp.r;
     ctx.globalCompositeOperation = 'lighter'; ctx.globalAlpha = tod.moon*.5*(1 - eyes*.6);
     ctx.drawImage(GLINT, mx - mr*5, my - mr*5, mr*10, mr*10);
     ctx.globalCompositeOperation = 'source-over'; ctx.globalAlpha = tod.moon*(1 - eyes*.5);
@@ -2420,8 +2507,8 @@ function frame(now){
     ctx.globalAlpha = 1; ctx.globalCompositeOperation = 'source-over';
   }
 
-  const aCol = mix([110,230,190],[255,176,140], smile);
-  const aAlpha = (1 - eyes*.8) * (.55 + smile*.45) * (1 - ck*.65) * tod.aur;
+  const aCol = mix(LK.aurCol,[255,176,140], smile);
+  const aAlpha = (1 - eyes*.8) * (.55 + smile*.45) * LK.aur * tod.aur;
   if (aAlpha > .01){   // aurora drawn at quarter resolution: it is soft anyway
     const ac2 = auroraCtx; ac2.save(); ac2.setTransform(1,0,0,1,0,0); ac2.clearRect(0, 0, auroraCv.width, auroraCv.height); ac2.restore();
     for (let b=0; b<3; b++){
@@ -2451,7 +2538,7 @@ function frame(now){
 
   const useLand = tod.tint[3] > .005;
   if (useLand){ ctx = landCtx; ctx.clearRect(0,0,W,H); }
-  const fogMul = 1 + eyes*1.4 - smile*.25;
+  const fogMul = (1 + eyes*1.4 - smile*.25) * LK.fog;
   const dox = ox(drift);
   const sk = {top, midc, hor, so, aCol, aAlpha};
   const gfn = world === 'miasto' ? drawCity(dt, fogMul, dox)
@@ -2498,8 +2585,8 @@ function frame(now){
 
   for (const L of flakes){
     for (const p of L.list){
-      p.y += p.vy * dt * (1 + wind*2.2);
-      p.x += (Math.sin(T*.9 + p.ph)*8*L.drift + wind*420*L.drift) * dt;
+      p.y += p.vy * dt * (1 + wind*2.2) * LK.snowV;
+      p.x += (Math.sin(T*.9 + p.ph)*8*L.drift + (wind + LK.snowW)*420*L.drift) * dt;
       if (p.x > W + 20) p.x -= W + 40;
       if (p.y > H + 6){ p.y = -6; p.x = rnd(0, W); }
     }
@@ -2511,6 +2598,9 @@ function frame(now){
   }
 
   setVeil('nightVeil', 'n', eyes*.5);
+  const gcol = `rgb(${LK.grade.map(v => v | 0).join(',')})`;
+  if (gcol !== veil.gc){ veil.gc = gcol; $('gradeVeil').style.background = gcol; }
+  setVeil('gradeVeil', 'g', LK.gradeA);
   setVeil('vignette', 'v', .35 + eyes*.3);
 
   if (worldFade.to){ worldFade.t = Math.min(1, worldFade.t + dt*2.5); if (worldFade.t >= 1){ world = worldFade.to; worldFade.to = null; } }
