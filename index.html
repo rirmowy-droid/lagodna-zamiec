@@ -837,7 +837,14 @@ function lzWorklet(){
       const a0 = (d.pan + 1)*Math.PI/4;
       const v = {off, gl:Math.cos(a0), gr:Math.sin(a0), t:0};
       const sine = (list, scale) => list.map(([r, a, dec]) => ({w:2*Math.PI*f*r/sr, ph:0, a:a*d.vel*scale, k:Math.pow(.001, 1/(dec*sr))}));
-      if (d.kind === 2){
+      if (d.kind === 1){
+        // kalimba tine: round fundamental, clamped-bar overtone at 6.27x, pitch dips at the attack, a soft "tock"
+        const s = d.dec/2.3;
+        v.parts = sine([[1,1,1.25*s],[6.27,.3,.08],[2.0,.07,.35*s],[3.0,.03,.2]], .5);
+        v.bend = .018; v.kb = Math.pow(.001, 1/(.04*sr));
+        v.clickN = v.click = Math.floor(.006*sr); v.clickA = .22*d.vel; v.clickY = 0;
+        v.max = Math.floor(sr*(1.25*s + .2));
+      } else if (d.kind === 2){
         const s = d.dec/2.3;
         v.parts = sine([[1,1,4*s],[2.76,.45,2.4*s],[5.4,.22,1.3*s],[8.93,.1,.7*s]], .26);
         v.max = Math.floor(sr*(4*s + .2));
@@ -846,18 +853,21 @@ function lzWorklet(){
         if (fr < .1){ Ni -= 1; fr += 1; }
         v.N = Math.max(2, Ni); v.C = (1 - fr)/(1 + fr);
         v.buf = new Float32Array(v.N);
-        const a = d.kind === 1 ? .06 + d.bright*.25 : .12 + d.bright*.8;
+        const a = .07 + d.bright*.45;
         let y = 0, mean = 0, peak = 1e-6;
         for (let i=0; i<v.N; i++){ y += a*((Math.random()*2 - 1) - y); v.buf[i] = y; mean += y; }
         mean /= v.N;
         for (let i=0; i<v.N; i++){ v.buf[i] -= mean; peak = Math.max(peak, Math.abs(v.buf[i])); }
-        const g = d.vel/peak*(d.kind === 1 ? .35 : .55);
+        // pluck position ~30% along the string: comb on the excitation, softer even harmonics like a harp
+        const P = Math.max(1, Math.floor(v.N*.3)), ex = v.buf.slice();
+        peak = 1e-6;
+        for (let i=0; i<v.N; i++){ v.buf[i] = ex[i] - .45*ex[(i + v.N - P) % v.N]; peak = Math.max(peak, Math.abs(v.buf[i])); }
+        const g = d.vel/peak*.55;
         for (let i=0; i<v.N; i++) v.buf[i] *= g;
-        const T60 = d.kind === 1 ? d.dec*.55 : d.dec*1.5;
+        const T60 = d.dec*1.8;
         v.loss = Math.pow(.001, 1/(T60*f));
         v.idx = 0; v.last = 0; v.x1 = 0; v.y1 = 0;
         v.max = Math.floor(sr*(T60 + .1));
-        if (d.kind === 1) v.parts = sine([[1,.5,.9*d.dec/2.3],[5.4,.1,.16]], 1);
       }
       this.voices.push(v);
       if (this.voices.length > 28) this.voices.shift();
@@ -880,7 +890,15 @@ function lzWorklet(){
             v.idx = v.idx + 1 === v.N ? 0 : v.idx + 1;
             s = cur;
           }
-          if (v.parts) for (const p of v.parts){ s += Math.sin(p.ph)*p.a; p.ph += p.w; p.a *= p.k; }
+          if (v.parts){
+            const bend = 1 + (v.bend || 0);
+            for (const p of v.parts){ s += Math.sin(p.ph)*p.a; p.ph += p.w*bend; p.a *= p.k; }
+            if (v.bend) v.bend *= v.kb;
+          }
+          if (v.click > 0){
+            const x = (Math.random()*2 - 1)*v.clickA*(v.click/v.clickN);
+            v.clickY += .35*(x - v.clickY); s += v.clickY; v.click--;
+          }
           L[i] += s*v.gl; if (R !== L) R[i] += s*v.gr;
           v.t++;
         }
