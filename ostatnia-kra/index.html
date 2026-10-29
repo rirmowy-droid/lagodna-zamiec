@@ -212,6 +212,8 @@ const MODS = [
     ['wind','Wiatr',0,1,.4,'%'],['snow','Śnieg',0,1,.6,'%'],['song','Śpiew lodu',0,1,.35,'%']]},
   {id:'seq',tab:'seq',name:'Tempo i fraza',spec:'tempo działa w obu trybach (kra pęka w jego rytmie) · reszta dotyczy frazy leadu',knobs:[
     ['tempo','Tempo',40,140,66,'BPM','int'],['density','Gęstość',0,1,.5,'%'],['variation','Wariacja',0,1,.3,'%'],['swing','Swing',0,1,.15,'%']]},
+  {id:'evo',tab:'seq',cls:'drone-only',toggle:true,name:'Auto-rozwój',spec:'gałki same powoli płyną wokół twoich ustawień, utwór narasta i opada, akordy czasem skręcają',knobs:[
+    ['speed','Tempo zmian',0,1,.4,'evo'],['depth','Zakres',0,1,.5,'%'],['arc','Łuk',0,1,.5,'%'],['harm','Harmonia',0,1,.3,'%']]},
   {id:'drone',tab:'seq',cls:'drone-only',name:'Drone',spec:'bez kroków: wszystko trwa, a ty kręcisz gałkami',knobs:[
     ['cloud','Chmura lodu',0,1,.4,'%'],['change','Zmiana akordu',6,90,30,'hold','log'],['swell','Fala',0,1,.5,'%']]},
   {id:'master',tab:'master',name:'Master',spec:'pogłos, echo ping-pong, limiter',knobs:[
@@ -242,7 +244,7 @@ const METERS=['3/4','4/4','5/4','6/8','7/8'];
 const SCALE=[69,71,72,74,76,77,79,81,83,84,86,88];
 let prog=PROG_PRESETS['Am – F – C – G'].map(([c,b])=>({c,b}));
 let meter='4/4', mode='seq', bassMode='both', pattern=[], kraPat=[];
-const ON={lead:true,choir:true,pad:true,tex:true,osc1:true,osc2:true,osc3:!LITE,penv:false,cenv:false,benv:false};
+const ON={evo:false,lead:true,choir:true,pad:true,tex:true,osc1:true,osc2:true,osc3:!LITE,penv:false,cenv:false,benv:false};
 
 function voiceChord(name){
   const [pc,iv]=CHORD_LIB[name]||CHORD_LIB.Am;
@@ -273,6 +275,7 @@ function fmt(k,v){
   if(u==='s')return v<.1?Math.round(v*1000)+' ms':v.toFixed(v<1?2:1).replace('.',',')+' s';
   if(u==='wave')return['sinus','trójkąt','piła','kwadrat','impuls'][v]||'';
   if(u==='st')return(v>0?'+':'')+v+' st';
+  if(u==='evo'){const s=Math.round(lerp(360,30,v));return s>=60?'cykl '+Math.round(s/60)+' min':'cykl '+s+' s';}
   if(u==='trig')return['co akord','co takt','co miarę','co ósemkę'][v]||'';
   if(u==='oct')return(v>0?'+':'')+v;
   if(u==='ct')return Math.round(v)+' ct';
@@ -602,6 +605,7 @@ function applyParam(mod,key){
 }
 function applyAll(){MODS.forEach(m=>m.knobs.forEach(k=>applyParam(m.id,k[0])));applyBassMode();Object.keys(ON).forEach(applyGate);padLevels();}
 function applyGate(id){
+  if(id==='evo'){if(ON.evo&&mode==='drone'){if(!Object.keys(EVO.base).length)evoStart();}else if(Object.keys(EVO.base).length)evoStop();updMode();return;}
   if(/^osc\d$/.test(id)){padLevels();return;}
   const e={penv:N.penvG,cenv:N.cenvG,benv:N.benvG}[id];
   if(e!==undefined){if(!e)return;const t=ctx.currentTime;e.gain.cancelScheduledValues(t);
@@ -737,9 +741,28 @@ function scheduleStep(i,t){
   if(on){const vel=(local===0?1:beats.includes(local)?.85:.65)*(.8+Math.random()*.25);leadNote(tt,SCALE[deg],Math.min(1,vel));}
   visAt(t,()=>markStep(i));
 }
+/* auto-evolve (drone): targets drift in knob space around the user's base, plus a slow rise-and-fall arc */
+const EVO_T=[['pad.raw',.3,1],['pad.lfo',.3,0],['pad.level',.15,1],['pad.detune',.2,0],['choir.vowel',.35,0],['choir.size',.25,0],['choir.level',.2,1],
+  ['choirfx.chorus',.3,0],['padfx.chorus',.3,0],['deep.grit',.25,1],['deep.flutter',.3,0],['bass.cutoff',.25,1],['drone.cloud',.3,1],
+  ['tex.density',.25,1],['tex.song',.3,0],['master.rev',.15,-1],['lead.grain',.3,0],['lead.crisp',.2,1]];
+const EVO_CHORDS=['Am','Am7','Am9','Asus2','C','Cmaj7','Cadd9','Dm','Dm9','Em','Em7','F','Fmaj7','Fmaj9','G','G6','Gsus4'];
+const EVO={base:{},ph:{},t0:0};
+function knobDef(id){const[m,k]=id.split('.');return MODS.find(x=>x.id===m).knobs.find(x=>x[0]===k);}
+function evoStart(){EVO.base={};EVO.t0=performance.now()/1000;EVO_T.forEach(([id])=>{const[m,k]=id.split('.');EVO.base[id]=P[m][k];EVO.ph[id]=[Math.random()*6.28,Math.random()*6.28,.8+Math.random()*.5];});}
+function evoStop(){for(const id in EVO.base){const[m,k]=id.split('.');knobs[id].set(EVO.base[id],false,true);}EVO.base={};}
+function evoTick(){
+  if(!ON.evo||mode!=='drone'||!playing||!Object.keys(EVO.base).length)return;
+  const t=performance.now()/1000-EVO.t0,P0=lerp(360,30,P.evo.speed),D=P.evo.depth,A=P.evo.arc;
+  const arc=Math.pow(Math.sin(Math.PI*((t/(P0*4))%1)),2)-.5;
+  EVO_T.forEach(([id,range,sign])=>{const k=knobDef(id),ph=EVO.ph[id],b=toNorm(k,EVO.base[id]);
+    const n=.6*Math.sin(6.2832*t/P0*ph[2]+ph[0])+.4*Math.sin(6.2832*t/(P0*1.618)*ph[2]+ph[1]);
+    const v=fromNorm(k,clamp(b+n*range*D+arc*sign*A*.5,0,1));
+    if(Math.abs(toNorm(k,P[id.split('.')[0]][k[0]])-toNorm(k,v))>.002)knobs[id].set(v,false,true);});
+}
+setInterval(evoTick,250);
 function droneTick(ahead){
   const now=ctx.currentTime;
-  if(chordPos<0||(P.drone.change<88&&now>=droneNextChord)){nextChord();chordChange(Math.max(now+.05,droneNextChord||now+.05),true);droneNextChord=now+P.drone.change;}
+  if(chordPos<0||(P.drone.change<88&&now>=droneNextChord)){if(ON.evo&&chordPos>=0&&Math.random()<P.evo.harm){curChord=voiceChord(EVO_CHORDS[(Math.random()*EVO_CHORDS.length)|0]);}else nextChord();chordChange(Math.max(now+.05,droneNextChord||now+.05),true);droneNextChord=now+P.drone.change;}
   const rate=P.drone.cloud*2.2;
   if(rate>.01){if(cloudT<now)cloudT=now+Math.random()/rate;
     while(cloudT<ahead){
@@ -895,12 +918,12 @@ function makeKnob(mod,k,seed){
   const lab=document.createElement('div');lab.className='k-label';lab.textContent=k[1];
   const val=document.createElement('div');val.className='k-val';
   el.append(svg,lab,val);
-  const obj={el,set(v,silent){v=clamp(v,k[2],k[3]);if(k[6]==='int')v=Math.round(v);P[mod][k[0]]=v;const n=toNorm(k,v);
+  const obj={el,set(v,silent,auto){v=clamp(v,k[2],k[3]);if(k[6]==='int')v=Math.round(v);P[mod][k[0]]=v;const n=toNorm(k,v);
       arc.setAttribute('d',n>.002?arcD(n,22):'');const a=135+270*n;const[x0,y0]=pol(a,5),[x1,y1]=pol(a,15);
       ind.setAttribute('x1',x0);ind.setAttribute('y1',y0);ind.setAttribute('x2',x1);ind.setAttribute('y2',y1);
       val.textContent=fmt(k,v);el.setAttribute('aria-valuenow',v);el.setAttribute('aria-valuetext',fmt(k,v));
       if(mod==='seq'&&k[0]==='tempo')document.getElementById('bpmLabel').textContent=v;
-      if(!silent){applyParam(mod,k[0]);saveState();if(mod==='tex'&&k[0]==='density')kraBuild();if(mod==='drone'&&k[0]==='change'&&ctx)droneNextChord=ctx.currentTime+v;}}};
+      if(!silent){applyParam(mod,k[0]);if(!auto){saveState();if(EVO.base[mod+'.'+k[0]]!==undefined)EVO.base[mod+'.'+k[0]]=v;}if(mod==='tex'&&k[0]==='density')kraBuild();if(mod==='drone'&&k[0]==='change'&&ctx)droneNextChord=ctx.currentTime+v;}}};
   el.setAttribute('aria-valuemin',k[2]);el.setAttribute('aria-valuemax',k[3]);
   let sy=0,sx=0,sn=0;
   el.addEventListener('pointerdown',e=>{el.setPointerCapture(e.pointerId);sy=e.clientY;sx=e.clientX;sn=toNorm(k,P[mod][k[0]]);e.preventDefault();el.focus({preventScroll:true});});
@@ -952,7 +975,7 @@ MODS.forEach((m,mi)=>{
     seqSec=secs.seq;seqSec.classList.toggle('drone',mode==='drone');
     const top=document.createElement('div');top.className='row';
     const f1=document.createElement('div');f1.className='field';f1.innerHTML='<label>Tryb</label>';
-    f1.appendChild(seg([['seq','Sekwencer'],['drone','Drone']],mode,v=>{mode=v;seqSec.classList.toggle('drone',v==='drone');document.getElementById('modeLabel').textContent=v==='drone'?'drone':'sekwencer';restartTiming();saveState();},'Tryb grania'));
+    f1.appendChild(seg([['seq','Sekwencer'],['drone','Drone']],mode,v=>{mode=v;seqSec.classList.toggle('drone',v==='drone');updMode();applyGate('evo');restartTiming();saveState();},'Tryb grania'));
     const f2=document.createElement('div');f2.className='field seq-only';f2.innerHTML='<label for="meterSel">Metrum</label><select id="meterSel">'+METERS.map(x=>`<option${x===meter?' selected':''}>${x}</option>`).join('')+'</select>';
     const f3=document.createElement('div');f3.className='field';f3.innerHTML='<label for="progSel">Progresja</label><select id="progSel"><option value="">wybierz gotową…</option>'+Object.keys(PROG_PRESETS).map(x=>`<option>${x}</option>`).join('')+'</select>';
     top.append(f1,f2,f3);seqSec.appendChild(top);
@@ -969,9 +992,10 @@ MODS.forEach((m,mi)=>{
     secs.master.appendChild(d);}
   else addModule(m,mi);
 });
+function updMode(){document.getElementById('modeLabel').textContent=mode==='drone'?(ON.evo?'drone · auto-rozwój':'drone'):'sekwencer';}
 function markBassMods(){document.getElementById('mod-bass').classList.toggle('off',bassMode==='deep');document.getElementById('mod-deep').classList.toggle('off',bassMode==='classic');}
 markBassMods();
-document.getElementById('modeLabel').textContent=mode==='drone'?'drone':'sekwencer';
+updMode();
 document.getElementById('meterLabel').textContent=meter;
 
 function renderProg(){
