@@ -696,7 +696,7 @@ function frame(now){
 document.getElementById('testA').addEventListener('click',beep);
 document.getElementById('testB').addEventListener('click',beepB);
 document.getElementById('compatBtn').addEventListener('click',()=>setCompat(!compat));
-try{if(localStorage.getItem('kra-compat')==='1'){compat=true;const b=document.getElementById('compatBtn');b.textContent='Tryb zgodności: wł.';b.setAttribute('aria-pressed','true');}}catch(e){}
+{let v=null;try{v=localStorage.getItem('kra-compat');}catch(e){}if(v==='1'||(v===null&&LITE)){compat=true;const b=document.getElementById('compatBtn');b.textContent='Tryb zgodności: wł.';b.setAttribute('aria-pressed','true');}}
 setInterval(()=>{if(ctx)diag();},1000);
 document.getElementById('startBtn').addEventListener('click',()=>{document.getElementById('start').hidden=true;play();});
 document.getElementById('playBtn').addEventListener('click',()=>{document.getElementById('start').hidden=true;playing?stop():play();});
