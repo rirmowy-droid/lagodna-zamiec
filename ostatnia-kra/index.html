@@ -187,9 +187,12 @@ const MODS = [
     ['attack','Narastanie',.2,8,2.5,'s','log']]},
   {id:'choirfx',tab:'choir',name:'Efekty chóru',spec:'drive → chorus → pogłos i echo',knobs:[
     ['drive','Drive',0,1,0,'%'],['chorus','Chorus',0,1,.35,'%'],['rate','Szybkość',.1,5,.4,'Hz','log'],['reverb','Reverb',0,1,.85,'%'],['delay','Delay',0,1,.12,'%']]},
-  {id:'aura',tab:'aura',toggle:true,name:'Aura',spec:'smyczkowy wavetable w unisonie + szklana oktawa wyżej · gładki filtr 24 dB i powietrze',knobs:[
-    ['level','Poziom',0,1,.5,'%'],['tone','Barwa',0,1,.35,'mix'],['detune','Rozstrojenie',0,40,12,'ct'],['bright','Jasność',400,12000,3200,'Hz','log'],
+  {id:'aura',tab:'aura',toggle:true,name:'Aura',spec:'4 głosy akordu × 3 oscylatory wavetable → gładki filtr 24 dB → powietrze',knobs:[
+    ['level','Poziom',0,1,.5,'%'],['detune','Unison',0,40,12,'ct'],['bright','Jasność',400,12000,3200,'Hz','log'],
     ['air','Powietrze',0,1,.4,'%'],['motion','Ruch',0,1,.35,'%'],['attack','Narastanie',.2,8,2.5,'s','log']]},
+  ...[1,2,3].map(n=>({id:'aosc'+n,tab:'aura',toggle:true,name:'Oscylator '+n,spec:['główna barwa, w unisonie','błysk oktawę wyżej','wolny slot, np. sinus oktawę niżej'][n-1],knobs:[
+    ['wave','Kształt',0,5,[0,1,2][n-1],'awave','int'],['oct','Oktawa',-2,2,[0,1,-1][n-1],'oct','int'],['semi','Półtony',-12,12,0,'st','int'],
+    ['fine','Strojenie',-50,50,0,'ct'],['level','Poziom',0,1,[.8,.45,.5][n-1],'%'],['pan','Panorama',-1,1,[0,.3,0][n-1],'pan']]})),
   {id:'aurafx',tab:'aura',name:'Efekty aury',spec:'drive → chorus → pogłos i echo',knobs:[
     ['drive','Drive',0,1,0,'%'],['chorus','Chorus',0,1,.45,'%'],['rate','Szybkość',.1,5,.35,'Hz','log'],['reverb','Reverb',0,1,.9,'%'],['delay','Delay',0,1,.25,'%']]},
   {id:'pad',tab:'pad',toggle:true,name:'Synty',spec:'4 głosy akordu × 3 oscylatory → filtr → przester',knobs:[
@@ -235,7 +238,7 @@ const METERS=['3/4','4/4','5/4','6/8','7/8'];
 const SCALE=[69,71,72,74,76,77,79,81,83,84,86,88];
 let prog=PROG_PRESETS['Am – F – C – G'].map(([c,b])=>({c,b}));
 let meter='4/4', mode='seq', bassMode='both', pattern=[], kraPat=[];
-const ON={lead:true,choir:true,aura:true,pad:true,tex:true,osc1:true,osc2:true,osc3:true};
+const ON={lead:true,choir:true,aura:true,pad:true,tex:true,osc1:true,osc2:true,osc3:true,aosc1:true,aosc2:true,aosc3:false};
 
 function voiceChord(name){
   const [pc,iv]=CHORD_LIB[name]||CHORD_LIB.Am;
@@ -265,6 +268,7 @@ function fmt(k,v){
   if(u==='s')return v.toFixed(v<1?2:1).replace('.',',')+' s';
   if(u==='oct')return(v>0?'+':'')+v;
   if(u==='ct')return Math.round(v)+' ct';
+  if(u==='awave')return['smyczki','szkło','sinus','trójkąt','piła','kwadrat'][v]||'';
   if(u==='wave')return['sinus','trójkąt','piła','kwadrat','impuls'][v]||'';
   if(u==='st')return(v>0?'+':'')+v+' st';
   if(u==='pan')return Math.abs(v)<.05?'środek':(v<0?'L ':'P ')+Math.round(Math.abs(v)*100);
@@ -523,22 +527,23 @@ function buildChoir(){
   });
 }
 function buildAura(){
-  const strings=wave(h=>[0,(h%2?1:.82)/Math.pow(h,1.05)*(h>24?.6:1)],64);
-  const glass=wave(h=>{const m={1:1,2:.55,3:.12,4:.4,5:.06,6:.22,8:.14,10:.06,12:.04};return[0,m[h]||0];},12);
+  N.auraWaves=[wave(h=>[0,(h%2?1:.82)/Math.pow(h,1.05)*(h>24?.6:1)],64),
+    wave(h=>{const m={1:1,2:.55,3:.12,4:.4,5:.06,6:.22,8:.14,10:.06,12:.04};return[0,m[h]||0];},12),'sine','triangle','sawtooth','square'];
   N.auraAmp=G();N.auraAmp.gain.value=0;N.auraGain=G();N.gateAura=G();N.auraFX=makeFX(false);
-  N.auraStr=G();N.auraGls=G();N.auraLP=BQ('lowpass',3200,.5);N.auraLP2=BQ('lowpass',3200,.5);N.auraGlsHP=BQ('highpass',500,.7);
+  N.auraIn=G();N.auraLP=BQ('lowpass',3200,.5);N.auraLP2=BQ('lowpass',3200,.5);
   N.auraShelf=ctx.createBiquadFilter();N.auraShelf.type='highshelf';N.auraShelf.frequency.value=7000;
-  N.auraStr.connect(N.auraLP);N.auraLP.connect(N.auraLP2);N.auraLP2.connect(N.auraShelf);N.auraGls.connect(N.auraGlsHP);N.auraGlsHP.connect(N.auraShelf);
+  N.auraIn.connect(N.auraLP);N.auraLP.connect(N.auraLP2);N.auraLP2.connect(N.auraShelf);
   N.auraShelf.connect(N.auraAmp);N.auraAmp.connect(N.auraGain);N.auraGain.connect(N.gateAura);N.gateAura.connect(N.auraFX.inp);
   N.auraLfo=OSC('sine',.08);N.auraLfoG=G();N.auraLfo.connect(N.auraLfoG);N.auraLfoG.connect(N.auraLP.frequency);N.auraLfoG.connect(N.auraLP2.frequency);N.auraLfo.start();
-  const U=LITE?2:3;
-  N.auraV=curChord.pad.map((m,i)=>{
-    const str=[];for(let u=0;u<U;u++){const o=OSC(strings,mtof(m)),r=U>1?(u/(U-1))*2-1:0,pan=ctx.createStereoPanner(),g=G();
-      pan.pan.value=r*.85*(i%2?-1:1);g.gain.value=.5/U;o.connect(g);g.connect(pan);pan.connect(N.auraStr);o.start();str.push({o,r});}
-    const gl=OSC(glass,mtof(m+12)),gg=G(),gp=ctx.createStereoPanner();gg.gain.value=.22;gp.pan.value=(i%2?.5:-.5);gl.connect(gg);gg.connect(gp);gp.connect(N.auraGls);gl.start();
-    return{str,gl};
-  });
+  // three slots; slot 1 always in unison, the others in unison on desktop only
+  N.aSlots=[1,2,3].map(n=>{const lv=G(),gate=G(),pan=ctx.createStereoPanner();lv.connect(gate);gate.connect(pan);pan.connect(N.auraIn);return{lv,gate,pan,U:n===1?(LITE?2:3):(LITE?1:2)};});
+  N.auraV=curChord.pad.map((m,i)=>N.aSlots.map(sl=>{const os=[];
+    for(let u=0;u<sl.U;u++){const o=OSC('sine',mtof(m)),r=sl.U>1?(u/(sl.U-1))*2-1:0,p=ctx.createStereoPanner(),g=G();
+      p.pan.value=r*.8*(i%2?-1:1);g.gain.value=.5/sl.U;o.connect(g);g.connect(p);p.connect(sl.lv);o.start();os.push({o,r});}
+    return os;}));
 }
+function auraPitch(t,tc){if(!N.auraV)return;N.auraV.forEach((vs,i)=>vs.forEach((os,si)=>{const q=P['aosc'+(si+1)];os.forEach(x=>x.o.frequency.setTargetAtTime(mtof(curChord.pad[i]+12*q.oct+q.semi),t,tc));}));}
+function auraDetune(){if(!N.auraV)return;N.auraV.forEach(vs=>vs.forEach((os,si)=>{const f=P['aosc'+(si+1)].fine;os.forEach(x=>setP(x.o.detune,f+x.r*P.aura.detune));}));}
 function buildTex(){
   N.texGain=G();N.texRev=G();N.texRev.gain.value=.95;N.texGain.connect(N.mix);N.texGain.connect(N.texRev);N.texRev.connect(N.revSend);
   N.wind=ctx.createBufferSource();N.wind.buffer=N.noise;N.wind.loop=true;
@@ -601,8 +606,12 @@ function applyParam(mod,key){
     case 'padfx.reverb':setP(N.padFX.rev.gain,v*1.1);break;
     case 'padfx.delay':setP(N.padFX.dly.gain,v*.7);break;
     case 'aura.level':setP(N.auraGain.gain,v);break;
-    case 'aura.tone':setP(N.auraStr.gain,1-v*.85);setP(N.auraGls.gain,v*1.5);break;
-    case 'aura.detune':N.auraV.forEach(x=>x.str.forEach(s=>setP(s.o.detune,s.r*v)));break;
+    case 'aura.detune':auraDetune();break;
+    case 'aosc1.wave':case 'aosc2.wave':case 'aosc3.wave':{const si=+mod[4]-1,w=N.auraWaves[v];N.auraV.forEach(vs=>vs[si].forEach(x=>{if(typeof w==='string')x.o.type=w;else x.o.setPeriodicWave(w);}));break;}
+    case 'aosc1.oct':case 'aosc2.oct':case 'aosc3.oct':case 'aosc1.semi':case 'aosc2.semi':case 'aosc3.semi':auraPitch(ctx.currentTime,.05);break;
+    case 'aosc1.fine':case 'aosc2.fine':case 'aosc3.fine':auraDetune();break;
+    case 'aosc1.level':case 'aosc2.level':case 'aosc3.level':{const si=+mod[4]-1;setP(N.aSlots[si].lv.gain,v*[1,.75,1,1,.75,.65][P[mod].wave]);break;}
+    case 'aosc1.pan':case 'aosc2.pan':case 'aosc3.pan':setP(N.aSlots[+mod[4]-1].pan.pan,v);break;
     case 'aura.bright':setP(N.auraLP.frequency,v,.1);setP(N.auraLP2.frequency,v,.1);applyParam('aura','motion');break;
     case 'aura.air':setP(N.auraShelf.gain,v*10);break;
     case 'aura.motion':setP(N.auraLfo.frequency,.03+v*.15);setP(N.auraLfoG.gain,P.aura.bright*.45*v);break;
@@ -623,7 +632,7 @@ function applyParam(mod,key){
   }}catch(e){}
 }
 function applyAll(){MODS.forEach(m=>m.knobs.forEach(k=>applyParam(m.id,k[0])));applyBassMode();Object.keys(ON).forEach(applyGate);}
-function applyGate(id){const n={lead:N.gateLead,choir:N.gateChoir,aura:N.gateAura,pad:N.gatePad,osc1:N.slots&&N.slots[0].gate,osc2:N.slots&&N.slots[1].gate,osc3:N.slots&&N.slots[2].gate}[id];if(n)setP(n.gain,ON[id]?1:0,.12);}
+function applyGate(id){const n={lead:N.gateLead,choir:N.gateChoir,aura:N.gateAura,pad:N.gatePad,osc1:N.slots&&N.slots[0].gate,osc2:N.slots&&N.slots[1].gate,osc3:N.slots&&N.slots[2].gate,aosc1:N.aSlots&&N.aSlots[0].gate,aosc2:N.aSlots&&N.aSlots[1].gate,aosc3:N.aSlots&&N.aSlots[2].gate}[id];if(n)setP(n.gain,ON[id]?1:0,.12);}
 function applyBassMode(){
   if(!ctx||!N.bassModeG||!N.deepModeG)return;
   setP(N.bassModeG.gain,bassMode==='deep'?0:bassMode==='both'?.6:1,.15);
@@ -648,7 +657,7 @@ function chordChange(t,soft){
     padPitch(t,at/3);
     N.padAmp.gain.cancelScheduledValues(t);N.padAmp.gain.setTargetAtTime(.7,t,.15);N.padAmp.gain.setTargetAtTime(1,t+.3,at/2.5);}
   if(N.auraV){const at=P.aura.attack;
-    N.auraV.forEach((v,i)=>{const f=mtof(c.pad[i]);v.str.forEach(s=>s.o.frequency.setTargetAtTime(f,t,at/4));v.gl.frequency.setTargetAtTime(f*2,t,at/4);});
+    auraPitch(t,at/4);
     N.auraAmp.gain.cancelScheduledValues(t);N.auraAmp.gain.setTargetAtTime(.75,t,.2);N.auraAmp.gain.setTargetAtTime(1,t+.35,at/2.5);}
   if(N.sections){const at=P.choir.attack;
     N.sections.forEach(s=>{const notes=s.S.notes(c);s.voices.forEach((v,i)=>v.o.frequency.setTargetAtTime(mtof(notes[i%2]),t+Math.random()*.15,at/5));
@@ -840,7 +849,7 @@ function makeKnob(mod,k,seed){
       ind.setAttribute('x1',x0);ind.setAttribute('y1',y0);ind.setAttribute('x2',x1);ind.setAttribute('y2',y1);
       val.textContent=fmt(k,v);el.setAttribute('aria-valuenow',v);el.setAttribute('aria-valuetext',fmt(k,v));
       if(mod==='seq'&&k[0]==='tempo')document.getElementById('bpmLabel').textContent=v;
-      if(!silent){applyParam(mod,k[0]);if(/^osc\d$/.test(mod)&&k[0]==='wave')applyParam(mod,'level');saveState();if(mod==='tex'&&k[0]==='density')kraBuild();if(mod==='drone'&&k[0]==='change'&&ctx)droneNextChord=ctx.currentTime+v;}}};
+      if(!silent){applyParam(mod,k[0]);if(/^a?osc\d$/.test(mod)&&k[0]==='wave')applyParam(mod,'level');saveState();if(mod==='tex'&&k[0]==='density')kraBuild();if(mod==='drone'&&k[0]==='change'&&ctx)droneNextChord=ctx.currentTime+v;}}};
   el.setAttribute('aria-valuemin',k[2]);el.setAttribute('aria-valuemax',k[3]);
   let sy=0,sx=0,sn=0;
   el.addEventListener('pointerdown',e=>{el.setPointerCapture(e.pointerId);sy=e.clientY;sx=e.clientX;sn=toNorm(k,P[mod][k[0]]);e.preventDefault();el.focus({preventScroll:true});});
@@ -950,10 +959,10 @@ document.getElementById('genBtn').addEventListener('click',generate);
 
 const PRESETS={
   'Pęknięcie':{},
-  'Szron':{lead:{crisp:.85,grain:35,scatter:.6,body:.45,decay:.7,crystal:.7,struct:.3,tone:13000},bass:{level:.55,impact:.35,pump:.5,env:.7},deep:{grit:.7,tone:220,sub:.6},aura:{tone:.75,air:.7,level:.4},choirfx:{chorus:.5,rate:.8},choir:{level:.35,sopranos:.6,basses:.4,vowel:.8},pad:{raw:.25,level:.3},osc1:{wave:1},osc2:{wave:0,oct:1,level:.5},osc3:{level:.2},tex:{density:.55,depth:.3},seq:{tempo:76,density:.65},master:{rev:.5,size:6}},
+  'Szron':{lead:{crisp:.85,grain:35,scatter:.6,body:.45,decay:.7,crystal:.7,struct:.3,tone:13000},bass:{level:.55,impact:.35,pump:.5,env:.7},deep:{grit:.7,tone:220,sub:.6},aura:{air:.7,level:.4},aosc1:{level:.4},aosc2:{level:.9},choirfx:{chorus:.5,rate:.8},choir:{level:.35,sopranos:.6,basses:.4,vowel:.8},pad:{raw:.25,level:.3},osc1:{wave:1},osc2:{wave:0,oct:1,level:.5},osc3:{level:.2},tex:{density:.55,depth:.3},seq:{tempo:76,density:.65},master:{rev:.5,size:6}},
   'Otchłań':{lead:{crisp:.4,grain:220,decay:3.2,oct:-1,tone:4000,struct:.7},bass:{level:1,sub:1,sat:.5,cutoff:260,impact:.9,glide:1.6,pump:.15,reese:22},deep:{level:.9,sub:1,grit:.35,tone:100,oct:-1},bassfx:{chorus:.25,rate:.2},choirfx:{reverb:1,delay:.25},padfx:{reverb:1,delay:.3},choir:{level:.6,basses:.9,tenors:.6,altos:.3,sopranos:.15,vowel:.1,attack:5},pad:{raw:.35,attack:6,level:.35},tex:{density:.5,depth:.9,song:.6},seq:{tempo:48,density:.35},drone:{cloud:.25,change:45},master:{rev:.75,size:13,delay:.35}},
-  'Chór lodu':{lead:{level:.55,crisp:.5},choir:{level:.85,basses:.75,tenors:.7,altos:.7,sopranos:.6,vowel:.45,size:.85,vib:.4,breath:.35,attack:3.5},choirfx:{chorus:.55,reverb:1,delay:.2},pad:{level:.18},aura:{level:.3,tone:.2},deep:{level:.6},tex:{density:.25},master:{rev:.7,size:11}},
-  'Zorza':{aura:{level:.75,tone:.55,air:.6,motion:.5,detune:18},aurafx:{chorus:.55,reverb:1,delay:.35},choir:{level:.3},pad:{level:.15},bass:{pump:.5,env:.7,body:.7},tex:{rhythm:.9,density:.5},seq:{tempo:72}},
+  'Chór lodu':{lead:{level:.55,crisp:.5},choir:{level:.85,basses:.75,tenors:.7,altos:.7,sopranos:.6,vowel:.45,size:.85,vib:.4,breath:.35,attack:3.5},choirfx:{chorus:.55,reverb:1,delay:.2},pad:{level:.18},aura:{level:.3},aosc2:{level:.2},deep:{level:.6},tex:{density:.25},master:{rev:.7,size:11}},
+  'Zorza':{aura:{level:.75,air:.6,motion:.5,detune:18},aosc2:{level:.7},aurafx:{chorus:.55,reverb:1,delay:.35},choir:{level:.3},pad:{level:.15},bass:{pump:.5,env:.7,body:.7},tex:{rhythm:.9,density:.5},seq:{tempo:72}},
   'Surowy':{lead:{crisp:.7,grain:70,body:.8,decay:1,tone:9000,space:.3},bass:{sat:.85,cutoff:700,reso:.45,reese:24,env:.7},deep:{rough:.85,flutter:.7,grit:.65},bassfx:{drive:.6},choir:{level:.3,vowel:.55},choirfx:{drive:.4,reverb:.5},pad:{raw:.9,attack:.8,lfo:.2},osc1:{fine:-22},osc2:{fine:22,wave:4},osc3:{wave:3,level:.55},padfx:{drive:.5,chorus:.15,reverb:.4,delay:.1},master:{rev:.3,size:3,delay:.2}}
 };
 const presetSel=document.getElementById('preset');
