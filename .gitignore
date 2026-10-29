@@ -3,3 +3,7 @@ android/.gradle/
 android/build/
 android/app/build/
 *.apk
+ostatnia-kra/android/app/src/main/assets/
+ostatnia-kra/android/.gradle/
+ostatnia-kra/android/build/
+ostatnia-kra/android/app/build/

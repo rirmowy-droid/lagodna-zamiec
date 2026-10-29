@@ -1,0 +1,54 @@
+name: Ostatnia Kra APK
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "ostatnia-kra/**"
+      - ".github/workflows/ostatnia-kra.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      BUILD_NUMBER: ${{ github.run_number }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Install Gradle 8.9
+        run: |
+          curl -sSL -o gradle.zip https://services.gradle.org/distributions/gradle-8.9-bin.zip
+          unzip -q gradle.zip -d "$HOME/gradle"
+          echo "$HOME/gradle/gradle-8.9/bin" >> "$GITHUB_PATH"
+
+      - name: Put the web app into the APK
+        run: |
+          mkdir -p ostatnia-kra/android/app/src/main/assets
+          cp ostatnia-kra/index.html ostatnia-kra/android/app/src/main/assets/index.html
+
+      - name: Build APK
+        working-directory: ostatnia-kra/android
+        run: gradle --no-daemon assembleRelease
+
+      - name: Name the APK
+        run: cp ostatnia-kra/android/app/build/outputs/apk/release/app-release.apk "OstatniaKra-0.1.${{ github.run_number }}.apk"
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: kra-v0.1.${{ github.run_number }}
+          name: Ostatnia Kra 0.1.${{ github.run_number }}
+          body: |
+            Plik do zainstalowania na Androidzie: pobierz OstatniaKra-0.1.${{ github.run_number }}.apk na telefonie i otwórz go.
+            Commit: ${{ github.sha }}
+          files: OstatniaKra-0.1.${{ github.run_number }}.apk
+          make_latest: false
