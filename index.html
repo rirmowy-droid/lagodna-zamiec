@@ -206,6 +206,10 @@ input[type=range]:disabled{opacity:.85}
         </div>
       </div>
       <div class="seqfoot">
+        <span class="hint" id="catHint">Kot przychodzi do każdego miejsca.</span>
+        <button class="ghost" id="catBtn" type="button" aria-pressed="true">Kot: zawsze obecny</button>
+      </div>
+      <div class="seqfoot">
         <span class="hint" id="tiltHint">Przechylaj telefon, żeby rozglądać się po scenie.</span>
         <button class="ghost" id="tiltBtn" type="button" aria-pressed="false">Przechylanie: wył.</button>
       </div>
@@ -2492,6 +2496,24 @@ const cat = {state:'away', timer:7, x:-200, dest:0, dir:1, pose:'sit', onBed:fal
   open:1, blink:0, blinkT:3, earL:0, earR:0, earLv:0, earRv:0, earLT:2, earRT:4, look:0, lookTarget:0, lookT:2,
   headUp:0, headUpT:0, mouth:0, purr:0, groom:0, step:0, flick:0, flickT:3, texts:[], smileArmed:true, bedX:W*.25, dox:0, hit:null, world:'dolina'};
 const catSize = () => CR*2.5;
+const PLACE_NAME = {dolina:'w dolinie', miasto:'w mieście', jezioro:'nad jeziorem', las:'w lesie', morze:'nad morzem'};
+let CATMODE = (() => { try { return localStorage.getItem('lz-cat') || 'always'; } catch(_){ return 'always'; } })();
+cat.place = 'dolina'; cat.placeT = rnd(60,120);
+if (CATMODE === 'always') cat.timer = 1.5;
+function catUI(){
+  const always = CATMODE === 'always';
+  $('catBtn').textContent = always ? 'Kot: zawsze obecny' : 'Kot: wędruje';
+  $('catBtn').setAttribute('aria-pressed', String(always));
+  $('catHint').textContent = always ? 'Kot przychodzi do każdego miejsca.' : 'Kot jest teraz ' + PLACE_NAME[cat.place] + '.';
+}
+$('catBtn').addEventListener('click', () => {
+  CATMODE = CATMODE === 'always' ? 'wander' : 'always';
+  try { localStorage.setItem('lz-cat', CATMODE); } catch(_){}
+  if (CATMODE === 'wander') cat.place = world;
+  else if (cat.state === 'away') cat.timer = Math.min(cat.timer, 1);
+  catUI();
+});
+catUI();
 
 function catGo(dest, after, speed=1){ const c = cat; c.state = 'walk'; c.dest = dest; c.after = after; c.speed = speed; c.dir = Math.sign(dest - c.x) || c.dir; c.onBed = false; c.headUpT = 0; }
 function catSpot(){
@@ -2505,7 +2527,12 @@ function catSpot(){
 function catEdge(){ return (cat.x + cat.dox < W/2 ? -catSize()*1.2 : W + catSize()*1.2) - cat.dox; }
 function catArrive(){
   const c = cat;
-  if (c.after === 'leave'){ c.state = 'away'; c.timer = rnd(40,90); return; }
+  if (c.after === 'leave'){
+    c.state = 'away';
+    if (CATMODE === 'always') c.timer = rnd(3,6);
+    else { const others = PLACES.filter(p => p !== world); c.place = others[Math.random()*others.length | 0]; c.placeT = rnd(60,120); c.timer = rnd(20,40); catUI(); }
+    return;
+  }
   c.state = 'rest'; c.actT = rnd(6,12);
   if (c.after === 'bed'){ c.onBed = true; c.pose = Math.random() < .5 ? 'sit' : 'lie'; c.returnT = -1; }
   else { c.onBed = false; c.pose = 'sit'; c.returnT = rnd(6,12); }
@@ -2533,7 +2560,16 @@ function petCat(){
 function updateCat(dt){
   const c = cat, S = catSize();
   c.bedX = (critterAt[world] ?? W*.6) > W/2 ? W*.24 : W*.76;
-  if (c.world !== world){ c.world = world; c.state = 'away'; c.timer = rnd(4,9); }
+  const here = CATMODE === 'always' || c.place === world;
+  if (c.world !== world){
+    c.world = world;
+    if (CATMODE === 'wander' && here){ c.state = 'rest'; c.onBed = true; c.x = c.bedX; c.pose = Math.random() < .5 ? 'sit' : 'lie'; c.actT = rnd(6,12); c.returnT = -1; }
+    else { c.state = 'away'; c.timer = CATMODE === 'always' ? 1 : rnd(4,9); }
+  }
+  if (CATMODE === 'wander' && !here){   // he lives somewhere else for a while, then moves on
+    c.placeT -= dt;
+    if (c.placeT <= 0){ c.placeT = rnd(60,120); c.place = PLACES[Math.random()*PLACES.length | 0]; if (c.place === world){ c.state = 'away'; c.timer = rnd(2,6); } catUI(); }
+  }
   c.blinkT -= dt; if (c.blinkT <= 0){ c.blink = .16; c.blinkT = rnd(2.5,7); }
   c.blink = Math.max(0, c.blink - dt);
   for (const sd of ['L','R']){
@@ -2556,6 +2592,7 @@ function updateCat(dt){
   if (cur.smile > .55 && c.smileArmed && c.state !== 'away'){ c.smileArmed = false; c.lookTarget = 0; c.lookT = 3; if (Math.random() < .55) catMeow(false); }
   if (cur.smile < .3) c.smileArmed = true;
   if (c.state === 'away'){
+    if (!here) return;
     c.timer -= dt;
     if (c.timer <= 0){
       const fromLeft = (c.bedX + c.dox) < W/2 ? Math.random() < .75 : Math.random() < .25;
@@ -2574,7 +2611,7 @@ function updateCat(dt){
       if (r < .25){ c.state = 'groom'; c.t = rnd(5,8); c.pose = 'sit'; }
       else if (r < .45) c.pose = c.pose === 'sit' ? 'lie' : 'sit';
       else if (r < .57 && c.onBed) catGo(catSpot(), 'spot');
-      else if (r < .65) catGo(catEdge(), 'leave');
+      else if (r < .65 && CATMODE === 'wander') catGo(catEdge(), 'leave');
       else { c.lookTarget = rnd(-1,1); c.lookT = 4; }
     }
   } else if (c.state === 'groom'){
