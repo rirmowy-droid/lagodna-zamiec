@@ -240,7 +240,7 @@ const MODS = [
     ['cloud','Chmura lodu',0,1,.4,'%'],['change','Zmiana akordu',6,90,30,'hold','log'],['swell','Fala',0,1,.5,'%']]},
   {id:'drums',tab:'drums',toggle:true,name:'Perkusja lo-fi',spec:'kick, werbel i hi-hat, syntetyzowane, przez szynę lo-fi · rytm z tempa, metrum i swingu sekwencera',knobs:[
     ['level','Poziom',0,1,.6,'%'],['kick','Kick',0,1,.9,'%'],['snare','Werbel',0,1,.6,'%'],['hat','Hi-hat',0,1,.45,'%'],
-    ['lofi','Lo-fi',0,1,.6,'%'],['ktone','Ton kicka',35,90,52,'Hz','log'],['sdecay','Werbel: ogon',.06,.5,.16,'s','log'],['hdecay','Hi-hat: ogon',.015,.25,.04,'s','log'],['human','Ludzki',0,1,.35,'%']]},
+    ['lofi','Lo-fi',0,1,.6,'%'],['ktone','Ton kicka',35,90,52,'Hz','log'],['sdecay','Werbel: ogon',.06,.5,.16,'s','log'],['hdecay','Hi-hat: ogon',.01,.15,.025,'s','log'],['human','Ludzki',0,1,.35,'%']]},
   {id:'mix',tab:'master',toggle:true,name:'Porządkowanie miksu',spec:'każda warstwa we własnym paśmie, bas nie zalewa środka, pady leciutko ustępują lodowi, bas ustępuje kickowi · wyłącz, żeby porównać',knobs:[
     ['duck','Ustępowanie',0,1,.5,'%'],['bal','Jasność miksu',0,1,.5,'%']]},
   {id:'master',tab:'master',name:'Master',spec:'pogłos, echo ping-pong, limiter',knobs:[
@@ -600,7 +600,9 @@ function buildDrums(){
   N.drumBus=G();N.crush=ctx.createWaveShaper();N.drumLP=BQ('lowpass',6000,.6);N.drumSat=ctx.createWaveShaper();N.drumSat.curve=shaperCurve(1.6);
   N.drumOut=G();N.gateDrums=G();N.drumRev=G();N.drumRev.gain.value=.1;
   N.drumBus.connect(N.crush);N.crush.connect(N.drumLP);N.drumLP.connect(N.drumSat);N.drumSat.connect(N.drumOut);N.drumOut.connect(N.gateDrums);
-  N.gateDrums.connect(N.mix);N.gateDrums.connect(N.drumRev);N.drumRev.connect(N.revSend);
+  N.gateDrums.connect(N.mix);N.drumSat.connect(N.drumRev);N.drumRev.connect(N.revSend);
+  // hats stay dry: their own bus, no crusher, no reverb send
+  N.hatBus=G();N.hatLP=BQ('lowpass',12000,.5);N.hatBus.connect(N.hatLP);N.hatLP.connect(N.drumOut);
 }
 function noiseSrc(t,dur){const s=ctx.createBufferSource();s.buffer=N.noise;s.start(t,Math.random()*(N.noise.duration-dur-.05),dur+.02);return s;}
 function hitKick(t,v){const D=P.drums,o=ctx.createOscillator(),g=G();o.type='sine';
@@ -613,9 +615,10 @@ function hitSnare(t,v){const D=P.drums,dec=D.sdecay,n=noiseSrc(t,dec*5),bp=BQ('b
   g.gain.setValueAtTime(0,t);g.gain.linearRampToValueAtTime(v*D.snare*.9,t+.002);g.gain.setTargetAtTime(0,t+.004,dec/3);n.connect(bp);bp.connect(g);g.connect(N.drumBus);
   const o=ctx.createOscillator(),og=G();o.type='triangle';o.frequency.setValueAtTime(200,t);o.frequency.exponentialRampToValueAtTime(165,t+.05);
   og.gain.setValueAtTime(v*D.snare*.45,t);og.gain.setTargetAtTime(0,t+.003,.025);o.connect(og);og.connect(N.drumBus);o.start(t);o.stop(t+.3);}
-function hitHat(t,v,open){const D=P.drums,dec=D.hdecay*(open?3.2:1),n=noiseSrc(t,dec*5),hp=BQ('highpass',7200,.7),g=G(),pan=ctx.createStereoPanner();
-  pan.pan.value=.25*P.master.width;g.gain.setValueAtTime(0,t);g.gain.linearRampToValueAtTime(v*D.hat*.5,t+.001);g.gain.setTargetAtTime(0,t+.002,dec/3);
-  n.connect(hp);hp.connect(g);g.connect(pan);pan.connect(N.drumBus);}
+function hitHat(t,v,open){const D=P.drums,dec=D.hdecay*(open?2.2:1),n=noiseSrc(t,dec*4),hp=BQ('highpass',8500,.9),pk=BQ('peaking',10500,1.2),g=G(),pan=ctx.createStereoPanner();
+  pk.gain.value=4;pan.pan.value=.25*P.master.width;
+  g.gain.setValueAtTime(0,t);g.gain.linearRampToValueAtTime(v*D.hat*.55,t+.0007);g.gain.setTargetAtTime(0,t+.0012,dec/4.5);
+  n.connect(hp);hp.connect(pk);pk.connect(g);g.connect(pan);pan.connect(N.hatBus||N.drumBus);}
 function drumStep(i,t){
   if(!ON.drums||!N.drumBus)return;ensureDrums();if(i>=drumPat.k.length)return;
   const H=P.drums.human,sw=(i%2)?stepDur()*.33*P.seq.swing:0;
@@ -712,7 +715,7 @@ function applyParam(mod,key){
     case 'frz.tone':setP(N.frzLP.frequency,v,.1);break;
     case 'frz.pos':drawWave();break;
     case 'drums.level':setP(N.drumOut.gain,v*1.1);break;
-    case 'drums.lofi':if(Math.abs(v-(N.crush._v??-1))>.04){N.crush._v=v;N.crush.curve=stairCurve(Math.round(lerp(12,4,v)));}setP(N.drumLP.frequency,lerp(14000,3000,v),.1);break;
+    case 'drums.lofi':if(N.hatLP)setP(N.hatLP.frequency,lerp(14000,7500,v),.1);if(Math.abs(v-(N.crush._v??-1))>.04){N.crush._v=v;N.crush.curve=stairCurve(Math.round(lerp(12,4,v)));}setP(N.drumLP.frequency,lerp(14000,3000,v),.1);break;
     case 'mix.bal':applyMix();break;
     case 'tex.level':setP(N.texGain.gain,v);break;
     case 'tex.wind':setP(N.windG.gain,v*.16);break;
@@ -1245,7 +1248,13 @@ const PRESETS={
   'Szron':{lead:{crisp:.85,grain:35,scatter:.6,body:.45,decay:.7,crystal:.7,struct:.3,tone:13000},bass:{level:.55,impact:.35},deep:{grit:.7,sub:.6},choir:{level:.35,sopranos:.6,basses:.4,vowel:.8},pad:{raw:.25,level:.3},tex:{density:.55,depth:.3},seq:{tempo:76,density:.65},master:{rev:.5,size:6}},
   'Otchłań':{lead:{crisp:.4,grain:220,decay:3.2,oct:-1,tone:4000,struct:.7},bass:{level:1,sub:1,drive:.55,cutoff:160,impact:.9,glide:1.6},deep:{level:.9,sub:1,grit:.35,oct:-1},choir:{level:.6,basses:.9,tenors:.6,altos:.3,sopranos:.15,vowel:.1,attack:5},pad:{raw:.35,attack:6,level:.35},tex:{density:.5,depth:.9,song:.6},seq:{tempo:48,density:.35},drone:{cloud:.25,change:45},master:{rev:.75,size:13,delay:.35}},
   'Chór lodu':{lead:{level:.55,crisp:.5},choir:{level:.85,basses:.75,tenors:.7,altos:.7,sopranos:.6,vowel:.45,size:.85,vib:.4,breath:.35,attack:3.5},pad:{level:.18},deep:{level:.6},tex:{density:.25},master:{rev:.7,size:11}},
-  'Surowy':{lead:{crisp:.7,grain:70,body:.8,decay:1,tone:9000,space:.3},bass:{drive:.8,cutoff:420,reso:.55},deep:{rough:.85,flutter:.7,grit:.65},choir:{level:.3,vowel:.55},pad:{raw:.9,detune:28,attack:.8,lfo:.2},padfx:{reverb:.4},master:{rev:.3,size:3,delay:.2}}
+  'Surowy':{lead:{crisp:.7,grain:70,body:.8,decay:1,tone:9000,space:.3},bass:{drive:.8,cutoff:420,reso:.55},deep:{rough:.85,flutter:.7,grit:.65},choir:{level:.3,vowel:.55},pad:{raw:.9,detune:28,attack:.8,lfo:.2},padfx:{reverb:.4},master:{rev:.3,size:3,delay:.2}},
+  'Lo-fi noc':{_x:{ON:{drums:true},drumStyle:'half',KEY:0,SCALEMODE:'dor'},drums:{lofi:.75,level:.55,hat:.4,human:.45},seq:{tempo:72,swing:.32,density:.4},pad:{raw:.35,level:.32},choir:{level:.38,vowel:.2},bass:{drive:.3,cutoff:200},lead:{decay:1.8,space:.7},tex:{density:.3},master:{rev:.5,delay:.25}},
+  'Zamarznięte jezioro':{_x:{mode:'drone',ON:{frz:true,evo:true},SCALEMODE:'eol'},frz:{level:.55,pos:.45,win:180,dens:.6,pitch:.85,oct:-1,tone:2200},evo:{speed:.25,depth:.55,arc:.6,harm:.25},drone:{cloud:.25,change:40,swell:.6},deep:{level:.9,sub:.95,grit:.4},choir:{level:.5,vowel:.15,attack:5},pad:{level:.25,raw:.3},tex:{density:.2,song:.5,wind:.5},master:{rev:.7,size:11}},
+  'Polarna zorza':{_x:{ON:{frz:true},SCALEMODE:'lid'},frz:{level:.4,pos:.65,win:90,dens:.45,pitch:1,oct:1,tone:6000},choir:{level:.6,sopranos:.7,altos:.6,basses:.4,vowel:.75,size:.8},choirfx:{chorus:.3,reverb:1,delay:.25},pad:{raw:.2,level:.3},lead:{crystal:.75,tone:11000,decay:2},seq:{tempo:60,density:.4},master:{rev:.75,size:12,delay:.4,feedback:.6}},
+  'Marsz pingwina':{_x:{ON:{drums:true},drumStyle:'prosty',KEY:3,SCALEMODE:'dur'},drums:{lofi:.5,kick:.85,snare:.55,hat:.5,human:.3},seq:{tempo:94,density:.65,swing:.15,variation:.35},lead:{crisp:.8,decay:.5,grain:60,space:.35},tex:{rhythm:1,density:.6,accent:.8},bass:{drive:.35,glide:.2,cutoff:300},pad:{raw:.4,level:.3},choir:{level:.3},master:{rev:.35,size:4,delay:.15}},
+  'Burza śnieżna':{_x:{ON:{drums:true},drumStyle:'break',SCALEMODE:'fry'},drums:{lofi:.8,level:.6,human:.5},seq:{tempo:84,density:.6,variation:.5},tex:{wind:1,snow:1,density:.75,depth:.4},bass:{drive:.75,cutoff:380,reso:.45},deep:{grit:.7,rough:.8,flutter:.7},pad:{raw:.8,detune:26,level:.38},lead:{crisp:.85,scatter:.6},master:{rev:.45,size:6}},
+  'Kołysanka':{_x:{mode:'drone',ON:{evo:true,drums:false},SCALEMODE:'dur'},evo:{speed:.1,depth:.35,arc:.4,harm:.15},drone:{cloud:.15,change:60,swell:.4},choir:{level:.55,sopranos:.55,basses:.35,vowel:.3,breath:.15,attack:6},pad:{raw:.15,level:.25,attack:7},bass:{level:.5,drive:.1},deep:{level:.55,grit:.2},tex:{density:.12,wind:.2,song:.25},lead:{crisp:.35,level:.5},master:{rev:.8,size:13,volume:.65}}
 };
 const presetSel=document.getElementById('preset'),UP_KEY='kra-user-presets';
 function userPresets(){try{return JSON.parse(localStorage.getItem(UP_KEY)||'{}')||{};}catch(e){return{};}}
@@ -1256,11 +1265,18 @@ function renderPresets(sel){
   if(names.length){const g2=document.createElement('optgroup');g2.label='Twoje';names.forEach(n=>{const o=document.createElement('option');o.value='u:'+n;o.textContent=n;g2.appendChild(o);});presetSel.appendChild(g2);}
   if(sel)presetSel.value=sel;document.getElementById('delPresetBtn').hidden=!presetSel.value.startsWith('u:');
 }
+function applyScene(x){
+  const on=Object.assign({drums:false,frz:false,evo:false,penv:false,cenv:false,benv:false},x.ON||{});
+  for(const k in on){ON[k]=on[k];applyGate(k);if(toggleUpd[k])toggleUpd[k]();}
+  const m=x.mode||'seq';if(m!==mode){const b=document.querySelector('.seg button[data-v="'+m+'"]');if(b)b.click();}
+  const key=x.KEY??0,sc=x.SCALEMODE||'eol';if(key!==KEY||sc!==SCALEMODE){KEY=key;SCALEMODE=sc;document.getElementById('keySel').value=String(KEY);document.getElementById('scaleSel').value=SCALEMODE;applyKey();}
+  if(x.drumStyle){drumStyle=x.drumStyle;drumPat=drumGen(drumStyle);drumPat._m=meter;const ds=document.getElementById('drumStyle');if(ds)ds.value=drumStyle;buildDrumGrid();}
+}
 function applyPreset(pr){
-  MODS.forEach(m=>m.knobs.forEach(k=>{const v=(pr[m.id]&&pr[m.id][k[0]]!==undefined)?pr[m.id][k[0]]:k[4];knobs[m.id+'.'+k[0]].set(v);}));
+  MODS.forEach(m=>{if(m.id==='mix'||m.id==='hand')return;m.knobs.forEach(k=>{const v=(pr[m.id]&&pr[m.id][k[0]]!==undefined)?pr[m.id][k[0]]:k[4];knobs[m.id+'.'+k[0]].set(v);});});
 }
 presetSel.addEventListener('change',()=>{const v=presetSel.value;document.getElementById('delPresetBtn').hidden=!v.startsWith('u:');
-  if(v.startsWith('b:')){applyPreset(PRESETS[v.slice(2)]);generate();return;}
+  if(v.startsWith('b:')){const pr=PRESETS[v.slice(2)];applyPreset(pr);applyScene(pr._x||{});generate();restartTiming();saveState();return;}
   const u=userPresets()[v.slice(2)];if(!u)return;applyPreset(u.P||{});
   if(u.ON)for(const k in ON)if(typeof u.ON[k]==='boolean'){ON[k]=u.ON[k];applyGate(k);if(toggleUpd[k])toggleUpd[k]();}
   if(u.bassMode){bassMode=u.bassMode;applyBassMode();markBassMods();bassSeg.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',b.dataset.v===bassMode));}
@@ -1311,8 +1327,9 @@ const cv=document.getElementById('scene'),cx=cv.getContext('2d');
 const reduce=window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 const TREES={spruce:[],bare:null};let gust=0,lvlS=0;
 /* penguin: now and then one waddles across the ice, flops on its belly and slides */
-let peng=null,pengNext=performance.now()+9000+Math.random()*12000,pengTracks=[];
-function pengSpawn(){const dir=Math.random()<.5?1:-1,k=.25+Math.random()*.4,Y=HY,vb=Math.max(Y+60,visibleBottom()-20);
+function pengGap(){return(45+Math.min(200,-Math.log(1-Math.random())*75))*1000;}  // irregular: mostly 1–3 min, sometimes longer
+let peng=null,pengNext=performance.now()+20000+Math.random()*40000,pengTracks=[];
+function pengSpawn(){const dir=1,k=.25+Math.random()*.4,Y=HY,vb=Math.max(Y+60,visibleBottom()-20);
   const y=Y+(vb-Y)*k,sc=(.35+.65*clamp((y-Y)/(H-Y),0,1))*Math.min(1.4,H/700)*28;
   peng={x:dir>0?-sc*2:W+sc*2,y,dir,sc,st:'walk',t:0,ph:0,v:0,slideAt:1.5+Math.random()*4,slides:Math.random()<.85};}
 function pengUpdate(dt){
@@ -1321,7 +1338,7 @@ function pengUpdate(dt){
   else if(p.st==='flop'){p.x+=p.dir*p.sc*1.2*dt;if(p.t>.35){p.st='slide';p.t=0;p.v=p.sc*(4+Math.random()*2);}}
   else if(p.st==='slide'){p.x+=p.dir*p.v*dt;p.v*=Math.pow(.55,dt);if(Math.random()<dt*30)pengTracks.push({x:p.x-p.dir*p.sc*.9,y:p.y+p.sc*.12,a:1,w:p.sc*.08});if(p.v<p.sc*.6){p.st='rise';p.t=0;}}
   else if(p.st==='rise'){if(p.t>.45){p.st='walk';p.t=0;p.slideAt=2+Math.random()*4;p.slides=Math.random()<.5;}}
-  if(p.x<-p.sc*4||p.x>W+p.sc*4){peng=null;pengNext=performance.now()+30000+Math.random()*60000;}
+  if(p.x<-p.sc*4||p.x>W+p.sc*4){peng=null;pengNext=performance.now()+pengGap();}
 }
 function pengDraw(T){
   // tracks left by sliding
