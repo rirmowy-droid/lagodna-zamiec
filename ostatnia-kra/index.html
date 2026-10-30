@@ -154,6 +154,7 @@ select{background:var(--paper-2);border:1.5px solid var(--ink);border-radius:2px
     <div class="row">
       <button class="btn primary" id="startBtn" type="button">Rozpocznij</button>
       <small>Najlepiej na słuchawkach albo z subwooferem.</small>
+      <button class="btn small" id="resetBtn" type="button">Wyczyść ustawienia</button>
     </div>
   </div>
 </div>
@@ -177,7 +178,13 @@ select{background:var(--paper-2);border:1.5px solid var(--ink);border-radius:2px
 </section>
 
 <script>
-window.addEventListener('error',e=>{try{const c=document.querySelector('#start .card p');if(c&&!window.__booted)c.textContent='Błąd uruchamiania: '+(e.message||e.error)+'. Zrób zrzut ekranu i wyślij go Claude.';}catch(_){}});
+window.__errs=[];
+function __showErr(msg){try{window.__errs.push(String(msg));let b=document.getElementById('errbox');if(!b){b=document.createElement('div');b.id='errbox';
+  b.style.cssText='position:fixed;left:8px;right:8px;top:calc(8px + env(safe-area-inset-top,0px));z-index:99;background:#000;color:#fff;font:12px/1.45 monospace;padding:10px 12px;border-radius:2px;max-height:45vh;overflow:auto;white-space:pre-wrap';
+  b.addEventListener('click',()=>b.remove());document.body.appendChild(b);}
+  b.textContent='Błąd (zrób zrzut ekranu i wyślij Claude, stuknij, by zamknąć):\n'+window.__errs.slice(-4).join('\n');}catch(_){}}
+window.addEventListener('error',e=>__showErr((e.message||e.error)+(e.lineno?' @'+e.lineno+':'+e.colno:'')));
+window.addEventListener('unhandledrejection',e=>__showErr('promise: '+(e.reason&&e.reason.message||e.reason)));
 </script>
 <script>
 "use strict";
@@ -400,7 +407,7 @@ function ensureCtx(){
 const G=()=>ctx.createGain();
 function BQ(type,f,q){const b=ctx.createBiquadFilter();b.type=type;b.frequency.value=f;if(q!=null)b.Q.value=q;return b;}
 function OSC(type,f){const o=ctx.createOscillator();if(typeof type==='string')o.type=type;else o.setPeriodicWave(type);o.frequency.value=f;return o;}
-function safe(name,fn){try{fn();}catch(e){diag(name+': '+e.message);console.error(e);}}
+function safe(name,fn){try{fn();}catch(e){diag(name+': '+e.message);__showErr(name+': '+e.message);console.error(e);}}
 
 function makeFX(isBass,dest){
   const inp=G(),mid=G(),out=G();
@@ -1034,7 +1041,7 @@ function setCompat(on){
   try{localStorage.setItem('kra-compat',on?'1':'0');}catch(e){}
 }
 function diag(x){if(x)diagExtra=x;const d=document.getElementById('diag');if(!d)return;if(!ctx){d.textContent=diagExtra;return;}
-  d.textContent=`stan: ${ctx.state} · ${ctx.sampleRate} Hz · czas: ${ctx.currentTime.toFixed(1)} s · opóźnienie: ${((ctx.baseLatency||0)*1000).toFixed(0)} ms · jakość: ${{full:'pełna',lite:'lekka',min:'minimalna'}[QUALITY]}${diagExtra?' · '+diagExtra:''}`;}
+  d.textContent=`stan: ${ctx.state} · ${ctx.sampleRate} Hz · czas: ${ctx.currentTime.toFixed(1)} s · opóźnienie: ${((ctx.baseLatency||0)*1000).toFixed(0)} ms · jakość: ${{full:'pełna',lite:'lekka',min:'minimalna'}[QUALITY]} · ${navigator.userAgent.match(/Chrome\/(\d+)/)?'WebView '+navigator.userAgent.match(/Chrome\/(\d+)/)[1]:''}${diagExtra?' · '+diagExtra:''}`;}
 
 /* ---------- sequencer pattern ---------- */
 function generate(){
@@ -1439,8 +1446,10 @@ document.getElementById('testB').addEventListener('click',beepB);
 document.getElementById('compatBtn').addEventListener('click',()=>setCompat(!compat));
 {let v=null;try{v=localStorage.getItem('kra-compat');}catch(e){}if(v==='1'){compat=true;const b=document.getElementById('compatBtn');b.textContent='Tryb zgodności: wł.';b.setAttribute('aria-pressed','true');}}
 setInterval(()=>{if(ctx)diag();},1000);
-document.getElementById('startBtn').addEventListener('click',()=>{document.getElementById('start').hidden=true;play();});
-document.getElementById('playBtn').addEventListener('click',()=>{document.getElementById('start').hidden=true;playing?stop():play();});
+document.getElementById('resetBtn').addEventListener('click',()=>{const b=document.getElementById('resetBtn');if(b.dataset.armed!=='1'){b.dataset.armed='1';b.textContent='Na pewno? Stuknij jeszcze raz';return;}
+  try{localStorage.removeItem(STORE);localStorage.removeItem('kra-compat');localStorage.removeItem('kra-quality');}catch(e){}location.reload();});
+document.getElementById('startBtn').addEventListener('click',()=>{try{document.getElementById('start').hidden=true;play();}catch(e){__showErr('start: '+e.message+'\n'+(e.stack||'').split('\n').slice(0,3).join('\n'));}});
+document.getElementById('playBtn').addEventListener('click',()=>{try{document.getElementById('start').hidden=true;playing?stop():play();}catch(e){__showErr('graj: '+e.message);}});
 const panel=document.getElementById('panel'),panelBtn=document.getElementById('panelBtn');
 panelBtn.addEventListener('click',()=>{const c=panel.classList.toggle('collapsed');panelBtn.textContent=c?'Pokaż panel':'Ukryj panel';panelBtn.setAttribute('aria-expanded',!c);cracks=[];buildLayers();makeSnow();});
 ['pointerdown','touchend','keydown'].forEach(ev=>document.addEventListener(ev,()=>{if(ctx&&ctx.state!=='running')ensureCtx();},{passive:true}));

@@ -70,9 +70,14 @@ class MainActivity : AppCompatActivity() {
             override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? =
                 loader.shouldInterceptRequest(request.url)
         }
+        web.settings.cacheMode = android.webkit.WebSettings.LOAD_NO_CACHE
+        // a new app version must never show a page cached by the previous one
+        val ver = try { packageManager.getPackageInfo(packageName, 0).let { if (Build.VERSION.SDK_INT >= 28) it.longVersionCode else @Suppress("DEPRECATION") it.versionCode.toLong() } } catch (e: Exception) { 0L }
+        val prefs = getSharedPreferences("kra", MODE_PRIVATE)
+        if (prefs.getLong("ver", -1L) != ver) { web.clearCache(true); prefs.edit().putLong("ver", ver).apply() }
         web.addJavascriptInterface(Bridge(), "KraNative")
         setContentView(web)
-        web.loadUrl("https://appassets.androidplatform.net/assets/index.html")
+        web.loadUrl("https://appassets.androidplatform.net/assets/index.html?v=$ver")
     }
 
     /** Recording: each file streams raw PCM to a temp file, then becomes a WAV in Downloads on close. */
