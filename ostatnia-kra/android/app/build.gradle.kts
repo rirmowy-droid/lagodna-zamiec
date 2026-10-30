@@ -46,6 +46,10 @@ android {
         jvmTarget = "17"
     }
 
+    androidResources {
+        noCompress += listOf("task")
+    }
+
     lint {
         checkReleaseBuilds = false
         abortOnError = false
@@ -56,4 +60,11 @@ dependencies {
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("androidx.appcompat:appcompat:1.7.0")
     implementation("androidx.webkit:webkit:1.11.0")
+
+    val camerax = "1.3.4"
+    implementation("androidx.camera:camera-core:$camerax")
+    implementation("androidx.camera:camera-camera2:$camerax")
+    implementation("androidx.camera:camera-lifecycle:$camerax")
+
+    implementation("com.google.mediapipe:tasks-vision:0.10.14")
 }

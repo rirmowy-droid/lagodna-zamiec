@@ -30,10 +30,12 @@ jobs:
           unzip -q gradle.zip -d "$HOME/gradle"
           echo "$HOME/gradle/gradle-8.9/bin" >> "$GITHUB_PATH"
 
-      - name: Put the web app into the APK
+      - name: Put the web app and hand model into the APK
         run: |
           mkdir -p ostatnia-kra/android/app/src/main/assets
           cp ostatnia-kra/index.html ostatnia-kra/android/app/src/main/assets/index.html
+          curl -sSL -o ostatnia-kra/android/app/src/main/assets/hand_landmarker.task \
+            https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task
 
       - name: Build APK
         working-directory: ostatnia-kra/android
