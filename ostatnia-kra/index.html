@@ -401,7 +401,7 @@ function noiseBuf(sec){const sr=ctx.sampleRate,b=ctx.createBuffer(2,Math.floor(s
 function wave(fn,n=48){const re=new Float32Array(n+1),im=new Float32Array(n+1);for(let h=1;h<=n;h++){const[a,b]=fn(h);re[h]=a;im[h]=b;}return ctx.createPeriodicWave(re,im);}
 
 function ensureCtx(){
-  if(!ctx){const AC=window.AudioContext||window.webkitAudioContext;try{ctx=new AC({latencyHint:'playback'});}catch(e){ctx=new AC();}
+  if(!ctx){const AC=window.AudioContext||window.webkitAudioContext;try{ctx=new AC(LITE?{latencyHint:'playback',sampleRate:32000}:{latencyHint:'playback'});}catch(e){try{ctx=new AC({latencyHint:'playback'});}catch(e2){ctx=new AC();}}
     ctx.addEventListener('statechange',showState);}
   try{const b=ctx.createBuffer(1,1,22050),s=ctx.createBufferSource();s.buffer=b;s.connect(ctx.destination);s.start(0);}catch(e){}
   if(ctx.state!=='running')ctx.resume().catch(()=>{});
@@ -914,7 +914,11 @@ function droneTick(ahead){
       cloudT+=-Math.log(1-Math.random())/rate;}}else cloudT=ahead;
 }
 function tick(){
-  if(!ctx||!playing)return;const ahead=ctx.currentTime+(LITE?.35:.15);
+  if(!ctx||!playing)return;const ahead=ctx.currentTime+(MIN?1.2:LITE?.9:.3);
+  // the phone was busy (timer late): skip the missed steps silently instead of firing them all at once
+  if(nextT<ctx.currentTime-.03){let changed=false;
+    while(nextT<ctx.currentTime+.03){if(mode==='seq'&&step%spb()===0&&(chordPos<0||chordPos>=prog.length||++barInChord>=prog[chordPos].b)){nextChord();changed=true;}nextT+=stepDur();step=(step+1)%pattern.length;}
+    if(changed)chordChange(ctx.currentTime+.05);}
   while(nextT<ahead){if(mode==='seq')scheduleStep(step,nextT);kraStep(step,nextT);envStep(step,nextT);drumStep(step,nextT);nextT+=stepDur();step=(step+1)%pattern.length;}
   if(mode==='drone')droneTick(ahead);
   if(ON.frz&&N.freezeIn){if(frzT<ctx.currentTime)frzT=ctx.currentTime;while(frzT<ahead){frzGrain(frzT);frzT+=(.7+Math.random()*.6)/frzRate();}}
@@ -1473,7 +1477,8 @@ function spawnCrack(kind,vel){
 function strokePart(pts,p){const n=pts.length-1,upto=p*n;cx.beginPath();cx.moveTo(pts[0][0],pts[0][1]);for(let i=1;i<=n;i++){if(i<=upto)cx.lineTo(pts[i][0],pts[i][1]);else{const f=upto-(i-1);if(f>0)cx.lineTo(lerp(pts[i-1][0],pts[i][0],f),lerp(pts[i-1][1],pts[i][1],f));break;}}cx.stroke();}
 let lastT=performance.now(),meterBuf=null,meterLv=0;const meterFill=document.getElementById('meterFill');
 function frame(now){
-  const dt=Math.min(.05,(now-lastT)/1000);lastT=now;
+  if(LITE&&now-lastT<(MIN?66:40)){requestAnimationFrame(frame);return;}
+  const dt=Math.min(.1,(now-lastT)/1000);lastT=now;
   if(ctx){const ct=ctx.currentTime;for(let i=visQ.length-1;i>=0;i--){if(visQ[i].t<=ct){visQ[i].fn();visQ.splice(i,1);}}}
   cx.setTransform(DPR,0,0,DPR,0,0);cx.fillStyle='#ffffff';cx.fillRect(0,0,W,H);
   if(!reduce&&shake>.05){cx.translate((Math.random()-.5)*shake,(Math.random()-.5)*shake*.6);shake*=.9;}
