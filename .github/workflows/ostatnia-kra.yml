@@ -2,7 +2,7 @@ name: Ostatnia Kra APK
 
 on:
   push:
-    branches: [main]
+    branches: [main, play-release]
     paths:
       - "ostatnia-kra/**"
       - ".github/workflows/ostatnia-kra.yml"
@@ -24,25 +24,68 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - name: Install Gradle 8.9
-        run: |
-          curl -sSL -o gradle.zip https://services.gradle.org/distributions/gradle-8.9-bin.zip
-          unzip -q gradle.zip -d "$HOME/gradle"
-          echo "$HOME/gradle/gradle-8.9/bin" >> "$GITHUB_PATH"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.13"
 
       - name: Put the web app and hand model into the APK
         run: |
           mkdir -p ostatnia-kra/android/app/src/main/assets
           cp ostatnia-kra/index.html ostatnia-kra/android/app/src/main/assets/index.html
-          curl -sSL -o ostatnia-kra/android/app/src/main/assets/hand_landmarker.task \
+          curl -fsSL -o ostatnia-kra/android/app/src/main/assets/hand_landmarker.task \
             https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task
 
-      - name: Build APK
+      - name: Build APK (test key, for installing straight on the phone)
         working-directory: ostatnia-kra/android
         run: gradle --no-daemon assembleRelease
 
       - name: Name the APK
         run: cp ostatnia-kra/android/app/build/outputs/apk/release/app-release.apk "OstatniaKra-0.1.${{ github.run_number }}.apk"
+
+      # The Google Play bundle, signed with the upload key from the repository secrets
+      # (KRA_UPLOAD_KEYSTORE_B64, KRA_UPLOAD_STORE_PASSWORD, KRA_UPLOAD_KEY_ALIAS, KRA_UPLOAD_KEY_PASSWORD).
+      # It is kept only with the workflow run (Actions → run → Artifacts), never in the public releases.
+      - name: Build the Play bundle (AAB)
+        working-directory: ostatnia-kra/android
+        env:
+          KS_B64: ${{ secrets.KRA_UPLOAD_KEYSTORE_B64 }}
+          KRA_RELEASE_STORE_PASSWORD: ${{ secrets.KRA_UPLOAD_STORE_PASSWORD }}
+          KRA_RELEASE_KEY_ALIAS: ${{ secrets.KRA_UPLOAD_KEY_ALIAS }}
+          KRA_RELEASE_KEY_PASSWORD: ${{ secrets.KRA_UPLOAD_KEY_PASSWORD }}
+        run: |
+          if [ -n "$KS_B64" ]; then
+            echo "$KS_B64" | base64 -d > "$RUNNER_TEMP/upload.jks"
+            export KRA_RELEASE_STORE="$RUNNER_TEMP/upload.jks"
+            echo "Signing the bundle with the Play upload key."
+          else
+            echo "::warning::No upload key in the secrets: the AAB is signed with the test key."
+          fi
+          gradle --no-daemon bundleRelease
+          cp app/build/outputs/bundle/release/app-release.aab "$GITHUB_WORKSPACE/OstatniaKra-0.1.${{ github.run_number }}.aab"
+          rm -f "$RUNNER_TEMP/upload.jks"
+
+      - name: Check 16 KB page alignment of the native libraries
+        run: |
+          APK="OstatniaKra-0.1.${{ github.run_number }}.apk"
+          READELF=$(ls -d "$ANDROID_HOME"/ndk/*/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf | sort -V | tail -1)
+          rm -rf so && mkdir so && unzip -q -o "$APK" 'lib/*' -d so
+          bad=0
+          for f in so/lib/arm64-v8a/*.so so/lib/x86_64/*.so; do
+            [ -f "$f" ] || continue
+            for a in $("$READELF" -lW "$f" | awk '$1=="LOAD"{print $NF}'); do
+              if [ $(( a )) -lt 16384 ]; then echo "NOT 16 KB aligned: $f ($a)"; bad=1; fi
+            done
+          done
+          BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
+          "$BT/zipalign" -c -P 16 4 "$APK" && echo "zip alignment ok" || bad=1
+          [ $bad -eq 0 ] && echo "All native libraries are 16 KB aligned."
+          exit $bad
+
+      - name: Keep the Play bundle with this run
+        uses: actions/upload-artifact@v4
+        with:
+          name: ostatnia-kra-play-bundle
+          path: OstatniaKra-0.1.${{ github.run_number }}.aab
 
       - name: Publish release
         uses: softprops/action-gh-release@v2

@@ -7,18 +7,18 @@ val buildNumber = (System.getenv("BUILD_NUMBER") ?: "1").toInt()
 
 android {
     namespace = "pl.ostatniakra"
-    compileSdk = 34
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "pl.ostatniakra"
         minSdk = 26
-        targetSdk = 34
+        targetSdk = 36
         versionCode = buildNumber
         versionName = "0.1.$buildNumber"
     }
 
-    // Same fixed sideloading key as Łagodna Zamieć, so updates install over the previous build.
     signingConfigs {
+        // Same fixed sideloading key as Łagodna Zamieć, so test builds install over the previous one.
         create("app") {
             storeFile = file("lz.keystore")
             storeType = "pkcs12"
@@ -26,12 +26,23 @@ android {
             keyAlias = "lz"
             keyPassword = "lagodnazamiec"
         }
+        // The Google Play upload key: never in the repo, the workflow decodes it from GitHub secrets.
+        val releaseStore = System.getenv("KRA_RELEASE_STORE")
+        if (releaseStore != null && file(releaseStore).exists()) {
+            create("play") {
+                storeFile = file(releaseStore)
+                storePassword = System.getenv("KRA_RELEASE_STORE_PASSWORD")
+                keyAlias = System.getenv("KRA_RELEASE_KEY_ALIAS")
+                keyPassword = System.getenv("KRA_RELEASE_KEY_PASSWORD")
+            }
+        }
     }
 
     buildTypes {
         release {
             isMinifyEnabled = false
-            signingConfig = signingConfigs.getByName("app")
+            signingConfig = signingConfigs.findByName("play") ?: signingConfigs.getByName("app")
+            ndk { debugSymbolLevel = "SYMBOL_TABLE" }
         }
         debug {
             signingConfig = signingConfigs.getByName("app")
@@ -59,12 +70,13 @@ android {
 dependencies {
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("androidx.appcompat:appcompat:1.7.0")
-    implementation("androidx.webkit:webkit:1.11.0")
+    implementation("androidx.webkit:webkit:1.12.1")
 
-    val camerax = "1.3.4"
+    // 1.4+ ships 16 KB page aligned native code (required by Google Play)
+    val camerax = "1.4.2"
     implementation("androidx.camera:camera-core:$camerax")
     implementation("androidx.camera:camera-camera2:$camerax")
     implementation("androidx.camera:camera-lifecycle:$camerax")
 
-    implementation("com.google.mediapipe:tasks-vision:0.10.14")
+    implementation("com.google.mediapipe:tasks-vision:0.10.26.1")
 }

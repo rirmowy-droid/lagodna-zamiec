@@ -12,6 +12,7 @@ import android.os.Handler
 import android.os.Looper
 import android.provider.MediaStore
 import android.util.Base64
+import android.view.WindowInsets
 import android.view.WindowManager
 import android.webkit.JavascriptInterface
 import android.webkit.WebResourceRequest
@@ -76,6 +77,14 @@ class MainActivity : AppCompatActivity() {
         val prefs = getSharedPreferences("kra", MODE_PRIVATE)
         if (prefs.getLong("ver", -1L) != ver) { web.clearCache(true); prefs.edit().putLong("ver", ver).apply() }
         web.addJavascriptInterface(Bridge(), "KraNative")
+        // Android 15+ draws apps edge to edge: keep the page clear of the status and navigation bars
+        if (Build.VERSION.SDK_INT >= 30) {
+            web.setOnApplyWindowInsetsListener { v, insets ->
+                val bars = insets.getInsets(WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout())
+                v.setPadding(bars.left, bars.top, bars.right, bars.bottom)
+                insets
+            }
+        }
         setContentView(web)
         web.loadUrl("https://appassets.androidplatform.net/assets/index.html?v=$ver")
     }
