@@ -44,7 +44,7 @@ No ads, no accounts, no tracking. Best on headphones or with a subwoofer.
 ## Odpowiedzi do formularzy w Play Console
 
 - **Bezpieczeństwo danych:** aplikacja nie zbiera ani nie udostępnia danych. Kamera jest przetwarzana wyłącznie na urządzeniu, w czasie rzeczywistym, bez zapisu – według zasad Google takie dane nie są „zbierane”.
-- **Polityka prywatności:** `https://github.com/rirmowy-droid/lagodna-zamiec/blob/main/ostatnia-kra/PRIVACY.md` (działa po scaleniu do main, bo repo jest publiczne).
+- **Polityka prywatności:** `https://rirmowy-droid.github.io/lagodna-zamiec/ostatnia-kra/privacy.html`
 - **Reklamy:** nie.
 - **Dostęp do aplikacji:** wszystkie funkcje dostępne bez logowania.
 - **Ocena treści (IARC):** brak treści wrażliwych; oczekiwana ocena 3+.
