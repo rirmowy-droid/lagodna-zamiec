@@ -1022,7 +1022,10 @@ setInterval(()=>{if(!sleepEnd)return;const left=(sleepEnd-performance.now())/100
 
 /* ---------- hand gesture volume (Android app camera) ---------- */
 const HAND={cur:null,found:false,state:'off',last:0};
+/* gesture control is shown only when the app offers it (currently switched off in the Android app) */
+function HAND_OK(){return NATIVE&&typeof KraNative.handStart==='function';}
 function handToggle(){
+  if(!HAND_OK()){ON.hand=false;handLabel();return;}
   if(!NATIVE)return;
   try{if(ON.hand)KraNative.handStart();else{KraNative.handStop();HAND.state='off';}}catch(e){}
   handLabel();
@@ -1174,7 +1177,7 @@ MODS.forEach((m,mi)=>{
     r.innerHTML='<div class="field"><label for="drumStyle">Rytm</label><select id="drumStyle">'+Object.entries(DRUM_STYLES).map(([k,n])=>`<option value="${k}">${n}</option>`).join('')+'<option value="own">własny</option></select></div><span class="hint">klik w kratkę: wył. → cicho → mocno</span>';
     const g=document.createElement('div');g.className='dgrid';g.id='dgrid';addModule(m,mi,box=>{box.appendChild(r);box.appendChild(g);});
   }
-  else if(m.id==='hand'){const box=addModule(m,mi);if(!NATIVE){const h=document.createElement('p');h.className='hint';h.textContent='W przeglądarce kamera jest niedostępna. Ta funkcja działa w aplikacji Ostatnia Kra na Androida.';box.appendChild(h);box.querySelector('.tgl').hidden=true;box.classList.add('off');}}
+  else if(m.id==='hand'){const box=addModule(m,mi);if(!HAND_OK()){ON.hand=false;box.hidden=true;}}
   else if(m.id==='master'){addModule(m,mi);
     const rr=document.createElement('div');rr.className='row';
     const f1=document.createElement('div');f1.className='field';f1.innerHTML='<label>Nagrywanie</label>';

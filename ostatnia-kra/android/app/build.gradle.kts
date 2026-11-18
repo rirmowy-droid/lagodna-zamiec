@@ -71,12 +71,4 @@ dependencies {
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("androidx.appcompat:appcompat:1.7.0")
     implementation("androidx.webkit:webkit:1.12.1")
-
-    // 1.4+ ships 16 KB page aligned native code (required by Google Play)
-    val camerax = "1.4.2"
-    implementation("androidx.camera:camera-core:$camerax")
-    implementation("androidx.camera:camera-camera2:$camerax")
-    implementation("androidx.camera:camera-lifecycle:$camerax")
-
-    implementation("com.google.mediapipe:tasks-vision:0.10.26.1")
 }

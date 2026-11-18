@@ -1,9 +1,7 @@
 package pl.ostatniakra
 
-import android.Manifest
 import android.annotation.SuppressLint
 import android.content.ContentValues
-import android.content.pm.PackageManager
 import android.media.AudioManager
 import android.os.Build
 import android.os.Bundle
@@ -18,12 +16,9 @@ import android.webkit.JavascriptInterface
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebView
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
-import androidx.core.content.ContextCompat
 import androidx.webkit.WebViewAssetLoader
 import androidx.webkit.WebViewClientCompat
-import org.json.JSONObject
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
@@ -33,22 +28,15 @@ import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * Shows Ostatnia Kra (assets/index.html) full screen.
- * Native extras for the page: streamed WAV recording (mix and stems) saved to Downloads,
- * and hand-height tracking from the front camera for gesture volume.
+ * Native extra for the page: streamed WAV recording (mix and stems) saved to Downloads.
+ * (Gesture volume from the front camera is switched off for now; HandSensor.kt and the
+ * camera code are in the git history, commit 2941e32, if it comes back.)
  */
 class MainActivity : AppCompatActivity() {
 
     private lateinit var web: WebView
     private val main = Handler(Looper.getMainLooper())
 
-    private var hand: HandSensor? = null
-    private var wantHand = false
-    private var resumed = false
-    @Volatile private var handState = "off"
-
-    private val camPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { ok ->
-        if (ok) applyHand() else { handState = "err:brak zgody na kamerę"; push(false, 0f, 0f) }
-    }
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -148,12 +136,6 @@ class MainActivity : AppCompatActivity() {
                 r.tmp.delete()
             }
         }
-
-        @JavascriptInterface
-        fun handStart() { main.post { wantHand = true; requestHand() } }
-
-        @JavascriptInterface
-        fun handStop() { main.post { wantHand = false; applyHand() } }
     }
 
     private fun wavHeader(dataBytes: Long, sr: Int): ByteArray {
@@ -164,48 +146,17 @@ class MainActivity : AppCompatActivity() {
         return b.array()
     }
 
-    private fun requestHand() {
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) applyHand()
-        else camPermission.launch(Manifest.permission.CAMERA)
-    }
-
-    private fun applyHand() {
-        if (wantHand && resumed) {
-            if (hand == null) {
-                handState = "loading"; push(false, 0f, 0f)
-                hand = HandSensor(this, this,
-                    onReady = { handState = "ok" },
-                    onError = { msg -> handState = "err:$msg"; push(false, 0f, 0f) },
-                    onResult = { found, x, y -> push(found, x, y) }
-                ).also { it.start() }
-            }
-        } else {
-            hand?.stop(); hand = null
-            if (!wantHand) handState = "off"
-        }
-    }
-
-    private fun push(found: Boolean, x: Float, y: Float) {
-        val o = JSONObject().put("state", handState).put("found", found).put("x", x.toDouble()).put("y", y.toDouble())
-        main.post { web.evaluateJavascript("window.__kraHand && window.__kraHand($o)", null) }
-    }
-
     override fun onResume() {
         super.onResume()
-        resumed = true
         web.onResume()
-        if (wantHand) applyHand()
     }
 
     override fun onPause() {
-        resumed = false
-        hand?.stop(); hand = null
         web.onPause()
         super.onPause()
     }
 
     override fun onDestroy() {
-        hand?.stop()
         web.destroy()
         super.onDestroy()
     }

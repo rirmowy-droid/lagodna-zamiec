@@ -28,12 +28,10 @@ jobs:
         with:
           gradle-version: "8.13"
 
-      - name: Put the web app and hand model into the APK
+      - name: Put the web app into the APK
         run: |
           mkdir -p ostatnia-kra/android/app/src/main/assets
           cp ostatnia-kra/index.html ostatnia-kra/android/app/src/main/assets/index.html
-          curl -fsSL -o ostatnia-kra/android/app/src/main/assets/hand_landmarker.task \
-            https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task
 
       - name: Build APK (test key, for installing straight on the phone)
         working-directory: ostatnia-kra/android
