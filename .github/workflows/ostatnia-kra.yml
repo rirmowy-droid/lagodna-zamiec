@@ -66,7 +66,8 @@ jobs:
         run: |
           APK="OstatniaKra-0.1.${{ github.run_number }}.apk"
           READELF=$(ls -d "$ANDROID_HOME"/ndk/*/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf | sort -V | tail -1)
-          rm -rf so && mkdir so && unzip -q -o "$APK" 'lib/*' -d so
+          rm -rf so && mkdir so
+          unzip -q -o "$APK" 'lib/*' -d so || echo "No native libraries in the APK (nothing to align)."
           bad=0
           for f in so/lib/arm64-v8a/*.so so/lib/x86_64/*.so; do
             [ -f "$f" ] || continue
