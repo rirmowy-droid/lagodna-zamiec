@@ -12,7 +12,7 @@ Ostatnia Kra to syntezator muzyczny na Androida. Aplikacja nie prosi o żadne up
 
 **Zmiany.** Ewentualne zmiany tej polityki pojawią się na tej stronie wraz z nową datą.
 
-**Kontakt:** [UZUPEŁNIJ: adres e-mail kontaktowy]
+**Kontakt:** ciamej28@gmail.com
 
 ---
 
@@ -28,4 +28,4 @@ Ostatnia Kra is a music synthesizer for Android. The app asks for no permissions
 
 **Children.** The app is not directed at children and collects no data from anyone.
 
-**Contact:** [FILL IN: contact e-mail]
+**Contact:** ciamej28@gmail.com

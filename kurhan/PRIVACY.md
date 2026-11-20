@@ -14,7 +14,7 @@ Kurhan to syntezator dronów na Androida. Aplikacja nie zbiera, nie przechowuje 
 
 **Zmiany.** Ewentualne zmiany tej polityki pojawią się na tej stronie wraz z nową datą.
 
-**Kontakt:** [UZUPEŁNIJ: adres e-mail kontaktowy]
+**Kontakt:** ciamej28@gmail.com
 
 ---
 
@@ -32,4 +32,4 @@ Kurhan is a drone synthesizer for Android. The app does not collect, store on se
 
 **Children.** The app is not directed at children and collects no data from anyone.
 
-**Contact:** [FILL IN: contact e-mail]
+**Contact:** ciamej28@gmail.com
