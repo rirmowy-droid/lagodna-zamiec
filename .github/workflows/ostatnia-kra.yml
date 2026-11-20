@@ -92,7 +92,9 @@ jobs:
           tag_name: kra-v0.1.${{ github.run_number }}
           name: Ostatnia Kra 0.1.${{ github.run_number }}
           body: |
-            Plik do zainstalowania na Androidzie: pobierz OstatniaKra-0.1.${{ github.run_number }}.apk na telefonie i otwórz go.
+            Plik do zainstalowania na Androidzie: pobierz OstatniaKra-0.1.${{ github.run_number }}.apk na telefonie i otwórz go. Plik .aab to paczka dla Google Play.
             Commit: ${{ github.sha }}
-          files: OstatniaKra-0.1.${{ github.run_number }}.apk
+          files: |
+            OstatniaKra-0.1.${{ github.run_number }}.apk
+            OstatniaKra-0.1.${{ github.run_number }}.aab
           make_latest: false
